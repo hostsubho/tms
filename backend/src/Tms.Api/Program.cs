@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -28,7 +29,12 @@ builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 builder.Services.AddDbContext<TmsDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-builder.Services.AddControllers();
+// Serialize enums (TenantStatus, TicketStatus, TicketPriority, Role, PlatformRole)
+// as their string names in JSON, matching how they're stored in Postgres -
+// otherwise clients see raw numbers like status:0 instead of "Trial".
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
