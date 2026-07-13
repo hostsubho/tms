@@ -42,14 +42,20 @@ database, each tenant-scoped table with a `TenantId` column and composite
 indexes described in the feature spec. `PlatformUsers` has no `TenantId` at
 all - platform staff are never members of a tenant.
 
-If you already ran `InitialCreate` before `PlatformUsers` existed, just run
-`dotnet ef migrations add AddPlatformUsers --output-dir Migrations && dotnet ef database update`
-to add it without touching existing data.
+If you already have a database from an earlier iteration, run new migrations
+incrementally instead of `InitialCreate`, e.g. the latest one adds `Plans`
+and the branding/timezone columns on `Tenants`:
+`dotnet ef migrations add AddPlansAndTenantBranding --output-dir Migrations && dotnet ef database update`
 
-For a real tenant, use the Super Admin API (see below) instead of hand-editing
-the database. `docs/seed-dev-tenant.sql` is still there for a quick throwaway
+Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
+required FK and there's no admin UI for creating plans yet:
+`psql "<connection string>" -f docs/seed-plans.sql`
+
+For a real tenant, use `POST /api/onboarding/signup` (self-serve) or the
+Super Admin API (sales-assisted, see below) instead of hand-editing the
+database. `docs/seed-dev-tenant.sql` is still there for a quick throwaway
 test tenant (`acme`) if you just want to poke at `/api/auth/register` without
-going through the platform flow.
+going through either onboarding flow.
 
 ## Run it
 
@@ -60,6 +66,17 @@ dotnet run --project src/Tms.Api
 Swagger UI is available at `/swagger` in Development.
 
 ## API surface (this iteration)
+
+**Onboarding** (`/api/onboarding`) — Module 2, self-serve signup
+- `POST /signup` — `{ companyName, subdomain, planId, adminEmail, adminPassword, timeZone? }`. Creates the tenant **and** its first Admin user in one call, returns tokens immediately (same shape as `/api/auth/register`/`login`) — this is the "signup to working workspace in one request" flow. Distinct from `/api/platform/tenants` (sales-assisted/manual provisioning by a Super Admin).
+
+**Plans** (`/api/plans`) — public, no auth
+- `GET /` — list of plans (id, name, limits, price) for the signup wizard to show. Seed data via `docs/seed-plans.sql`; no write endpoint yet.
+
+**Tenant Settings** (`/api/tenant`) — requires a tenant AppUser token
+- `GET /me` — the caller's own tenant (name, subdomain, timezone, branding, plan, status, trial end). Any authenticated tenant user.
+- `PATCH /me` — update name/timezone/branding. `Admin` only.
+- `POST /me/plan` — `{ planId }`, the upgrade/downgrade flow. `Admin` only.
 
 **Auth** (`/api/auth`) — Module 1
 - `POST /register` — `{ tenantSlug, email, password }`. First user for a tenant becomes `Admin`, others default to `Agent`.
