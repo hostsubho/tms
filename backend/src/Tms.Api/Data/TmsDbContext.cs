@@ -67,6 +67,11 @@ public class TmsDbContext : DbContext
         modelBuilder.Entity<RefreshToken>()
             .HasQueryFilter(r => r.TenantId == _tenantContext.TenantId);
 
+        modelBuilder.Entity<Tenant>()
+            .HasIndex(t => t.Subdomain).IsUnique();
+        modelBuilder.Entity<Tenant>()
+            .Property(t => t.Status).HasConversion<string>();
+
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.
         // Auth endpoints that need to resolve a tenant before TenantId is known
