@@ -9,3 +9,5 @@ backend/**/obj/
 backend/**/appsettings.Production.json
 
 .DS_Store
+.vercel
+.env*
