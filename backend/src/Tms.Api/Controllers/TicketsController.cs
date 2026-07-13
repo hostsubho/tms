@@ -5,6 +5,7 @@ using Tms.Api.Data;
 using Tms.Api.Dtos.Tickets;
 using Tms.Api.Extensions;
 using Tms.Api.Models;
+using Tms.Api.Services;
 
 namespace Tms.Api.Controllers;
 
@@ -38,14 +39,33 @@ public class TicketsController : ControllerBase
             .Take(100)
             .ToListAsync(ct);
 
-        return Ok(tickets.Select(TicketResponse.FromEntity));
+        var utcNow = DateTime.UtcNow;
+        var escalatedAny = false;
+        foreach (var ticket in tickets)
+        {
+            if (SlaEvaluator.CheckAndEscalate(ticket, utcNow)) escalatedAny = true;
+        }
+        if (escalatedAny) await _db.SaveChangesAsync(ct);
+
+        return Ok(tickets.Select(t => TicketResponse.FromEntity(t, utcNow)));
     }
 
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<TicketResponse>> GetTicket(Guid id, CancellationToken ct)
     {
         var ticket = await _db.Tickets.FirstOrDefaultAsync(t => t.Id == id, ct);
-        return ticket is null ? NotFound() : Ok(TicketResponse.FromEntity(ticket));
+        if (ticket is null) return NotFound();
+
+        var utcNow = DateTime.UtcNow;
+        // Lazily evaluated on read rather than via a background job - there's
+        // no worker/scheduler in this deployment, so "automatic" escalation
+        // happens the next time anyone views the ticket or the list. Good
+        // enough for the spec's "shows on the SLA dashboard before and after
+        // breach" bar; a real cron-based sweep would catch breaches even for
+        // tickets nobody happens to look at.
+        if (SlaEvaluator.CheckAndEscalate(ticket, utcNow)) await _db.SaveChangesAsync(ct);
+
+        return Ok(TicketResponse.FromEntity(ticket, utcNow));
     }
 
     [HttpPost]
@@ -54,6 +74,7 @@ public class TicketsController : ControllerBase
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
 
+        var utcNow = DateTime.UtcNow;
         var ticket = new Ticket
         {
             Id = Guid.NewGuid(),
@@ -64,15 +85,22 @@ public class TicketsController : ControllerBase
             Status = TicketStatus.New,
             CategoryId = request.CategoryId,
             AssigneeId = request.AssigneeId,
-            SlaPolicyId = request.SlaPolicyId,
             RequesterId = User.GetUserId(),
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = utcNow,
         };
+
+        // SlaPolicyId is always derived server-side from the tenant's SLA
+        // policies matched against Priority - never trusted from the request
+        // body (same pattern as TenantId/RequesterId above), so a caller
+        // can't hand-pick a more lenient SLA for their own ticket.
+        var policies = await _db.SlaPolicies.ToListAsync(ct);
+        var matchedPolicy = SlaEvaluator.FindMatchingPolicy(policies, ticket.Priority);
+        SlaEvaluator.ApplyPolicyToNewTicket(ticket, matchedPolicy);
 
         _db.Tickets.Add(ticket);
         await _db.SaveChangesAsync(ct);
 
-        return CreatedAtAction(nameof(GetTicket), new { id = ticket.Id }, TicketResponse.FromEntity(ticket));
+        return CreatedAtAction(nameof(GetTicket), new { id = ticket.Id }, TicketResponse.FromEntity(ticket, utcNow));
     }
 
     [HttpPatch("{id:guid}")]
@@ -89,7 +117,8 @@ public class TicketsController : ControllerBase
         if (request.AssigneeId is not null) ticket.AssigneeId = request.AssigneeId;
 
         await _db.SaveChangesAsync(ct);
-        return Ok(TicketResponse.FromEntity(ticket));
+        var utcNow = DateTime.UtcNow;
+        return Ok(TicketResponse.FromEntity(ticket, utcNow));
     }
 
     [HttpGet("{id:guid}/comments")]
@@ -112,9 +141,10 @@ public class TicketsController : ControllerBase
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
 
-        var ticketExists = await _db.Tickets.AnyAsync(t => t.Id == id, ct);
-        if (!ticketExists) return NotFound();
+        var ticket = await _db.Tickets.FirstOrDefaultAsync(t => t.Id == id, ct);
+        if (ticket is null) return NotFound();
 
+        var utcNow = DateTime.UtcNow;
         var comment = new TicketComment
         {
             Id = Guid.NewGuid(),
@@ -123,10 +153,18 @@ public class TicketsController : ControllerBase
             AuthorId = User.GetUserId(),
             Body = request.Body,
             IsInternal = request.IsInternal,
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = utcNow,
         };
 
         _db.TicketComments.Add(comment);
+
+        // Module 4 - SLA Management: first comment of any kind counts as the
+        // "first response" for response-SLA purposes (see SlaEvaluator).
+        if (ticket.FirstRespondedAt is null)
+        {
+            ticket.FirstRespondedAt = utcNow;
+        }
+
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GetComments), new { id }, CommentResponse.FromEntity(comment));

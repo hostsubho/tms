@@ -16,6 +16,11 @@ interface Ticket {
   assigneeId: string | null;
   createdAt: string;
   dueAt: string | null;
+  responseDueAt: string | null;
+  firstRespondedAt: string | null;
+  escalated: boolean;
+  isResolutionBreached: boolean;
+  isResponseBreached: boolean;
 }
 
 interface Comment {
@@ -197,6 +202,46 @@ export default function TicketDetailPage() {
             </p>
           </div>
         </div>
+
+        {(ticket.dueAt || ticket.responseDueAt) && (
+          <div className="rounded-lg border border-zinc-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-zinc-900 mb-3">SLA</h2>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500 mb-1">Response target</p>
+                {ticket.responseDueAt ? (
+                  <p className={ticket.isResponseBreached ? "text-red-600 font-medium" : "text-zinc-700"}>
+                    {new Date(ticket.responseDueAt).toLocaleString()}
+                    {ticket.isResponseBreached && " (breached)"}
+                  </p>
+                ) : (
+                  <p className="text-zinc-400">—</p>
+                )}
+                {ticket.firstRespondedAt && (
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    First response {new Date(ticket.firstRespondedAt).toLocaleString()}
+                  </p>
+                )}
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase text-zinc-500 mb-1">Resolution target</p>
+                {ticket.dueAt ? (
+                  <p className={ticket.isResolutionBreached ? "text-red-600 font-medium" : "text-zinc-700"}>
+                    {new Date(ticket.dueAt).toLocaleString()}
+                    {ticket.isResolutionBreached && " (breached)"}
+                  </p>
+                ) : (
+                  <p className="text-zinc-400">—</p>
+                )}
+              </div>
+            </div>
+            {ticket.escalated && (
+              <span className="mt-3 inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+                Escalated due to SLA breach
+              </span>
+            )}
+          </div>
+        )}
 
         <div className="rounded-lg border border-zinc-200 bg-white p-6">
           <h2 className="text-sm font-semibold text-zinc-900 mb-4">Comments</h2>

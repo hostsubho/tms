@@ -13,6 +13,8 @@ interface Ticket {
   priority: string;
   createdAt: string;
   dueAt: string | null;
+  escalated: boolean;
+  isResolutionBreached: boolean;
 }
 
 interface Category {
@@ -98,7 +100,6 @@ export default function TenantDashboardPage() {
           priority,
           categoryId: categoryId || null,
           assigneeId: null,
-          slaPolicyId: null,
         }),
       });
       setTickets((prev) => (prev ? [ticket, ...prev] : [ticket]));
@@ -122,6 +123,12 @@ export default function TenantDashboardPage() {
           {email && <p className="text-sm text-zinc-500">Signed in as {email}</p>}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => router.push("/dashboard/sla-policies")}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+          >
+            SLA Policies
+          </button>
           <button
             onClick={() => setShowCreate((v) => !v)}
             className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800"
@@ -221,6 +228,7 @@ export default function TenantDashboardPage() {
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Priority</th>
                   <th className="px-4 py-3">Created</th>
+                  <th className="px-4 py-3">SLA</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
@@ -243,6 +251,19 @@ export default function TenantDashboardPage() {
                     <td className={`px-4 py-3 ${PRIORITY_STYLES[t.priority] ?? ""}`}>{t.priority}</td>
                     <td className="px-4 py-3 text-zinc-500">
                       {new Date(t.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      {t.isResolutionBreached ? (
+                        <span className="inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+                          {t.escalated ? "Breached · Escalated" : "Breached"}
+                        </span>
+                      ) : t.dueAt ? (
+                        <span className="text-xs text-zinc-500">
+                          Due {new Date(t.dueAt).toLocaleString()}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-zinc-400">No SLA</span>
+                      )}
                     </td>
                   </tr>
                 ))}

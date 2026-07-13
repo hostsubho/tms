@@ -47,6 +47,10 @@ incrementally instead of `InitialCreate`, e.g. the latest one adds `Plans`
 and the branding/timezone columns on `Tenants`:
 `dotnet ef migrations add AddPlansAndTenantBranding --output-dir Migrations && dotnet ef database update`
 
+Module 4 (SLA Management) adds `ResponseDueAt`, `FirstRespondedAt`, `Escalated`
+to `Tickets` and `Priority` to `SlaPolicies`:
+`dotnet ef migrations add AddSlaFields --output-dir Migrations && dotnet ef database update`
+
 Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
 required FK and there's no admin UI for creating plans yet:
 `psql "<connection string>" -f docs/seed-plans.sql`
@@ -88,15 +92,22 @@ All return `{ accessToken, accessTokenExpiresAtUtc, refreshToken, userId, email,
 Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bearer <token>`.
 
 **Tickets** (`/api/tickets`) — Module 3, requires auth
-- `GET /` — filterable by `status`, `assigneeId`
-- `GET /{id}`
-- `POST /` — creates a ticket; `TenantId`/`RequesterId` are always set server-side, never from the request body
-- `PATCH /{id}` — partial update (status, priority, assignee, etc.)
-- `GET /{id}/comments`, `POST /{id}/comments` — `isInternal` flag separates agent notes from customer-visible replies
+- `GET /` — filterable by `status`, `assigneeId`. Response includes SLA fields (see Module 4 below); reading the list lazily checks every ticket for a new SLA breach and escalates it if so, persisting the change.
+- `GET /{id}` — same lazy breach/escalation check as the list, scoped to this ticket.
+- `POST /` — creates a ticket; `TenantId`/`RequesterId`/`SlaPolicyId` are always set server-side, never from the request body. `SlaPolicyId` is auto-matched from the tenant's SLA policies by the ticket's `Priority` (see Module 4).
+- `PATCH /{id}` — partial update (status, priority, assignee, etc.). Does **not** recompute `DueAt`/`ResponseDueAt` — SLA due dates are a one-time commitment made at creation.
+- `GET /{id}/comments`, `POST /{id}/comments` — `isInternal` flag separates agent notes from customer-visible replies. The first comment on a ticket (of any kind) sets `FirstRespondedAt`, used for response-SLA breach detection.
 
 **Categories** (`/api/categories`)
 - `GET /`
 - `POST /` — restricted to `Admin`/`Manager` roles
+
+**SLA Policies** (`/api/sla-policies`) — Module 4, requires auth
+- `GET /` — any authenticated tenant user.
+- `POST /` — `{ name, responseTargetMinutes, resolutionTargetMinutes, priority? }`. `Admin`/`Manager` only. `priority` omitted/null makes this the tenant's default/fallback policy (applied when no policy targets the ticket's specific priority). At most one policy per priority (including at most one default) is enforced — a second attempt returns 409.
+- `PATCH /{id}` — update name/targets. `Admin`/`Manager` only. Priority can't be changed after creation (delete and recreate instead).
+- `DELETE /{id}` — `Admin`/`Manager` only. Tickets already assigned to a deleted policy keep their already-computed due dates.
+- Every `TicketResponse` includes `dueAt` (resolution target), `responseDueAt`, `firstRespondedAt`, `escalated`, `isResolutionBreached`, `isResponseBreached`. Breach detection and escalation (bump priority one level, once) run lazily whenever a ticket is read via `GET /api/tickets` or `GET /api/tickets/{id}` — there's no background worker in this deployment, so a breach is only caught the next time someone views the ticket or list, not the instant it happens.
 
 **Platform Auth** (`/api/platform/auth`) — Module 5, Super Admin console
 - `POST /bootstrap` — `{ name, email, password }`. Only works once, while `PlatformUsers` is empty; creates the first `Owner`. 409 after that.

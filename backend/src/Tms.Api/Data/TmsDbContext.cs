@@ -61,6 +61,8 @@ public class TmsDbContext : DbContext
 
         modelBuilder.Entity<SlaPolicy>()
             .HasQueryFilter(s => s.TenantId == _tenantContext.TenantId);
+        modelBuilder.Entity<SlaPolicy>()
+            .Property(s => s.Priority).HasConversion<string>();
 
         modelBuilder.Entity<RefreshToken>()
             .HasIndex(r => r.TokenHash).IsUnique();
