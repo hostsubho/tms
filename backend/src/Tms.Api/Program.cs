@@ -1,8 +1,12 @@
+using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Tms.Api.Data;
 using Tms.Api.Middleware;
+using Tms.Api.Models;
+using Tms.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,7 +16,13 @@ var connectionString = builder.Configuration.GetConnectionString("TmsDb")
     ?? Environment.GetEnvironmentVariable("CONNECTIONSTRINGS__TMSDB")
     ?? throw new InvalidOperationException("Missing TmsDb connection string.");
 
+var signingKey = builder.Configuration["Auth:SigningKey"]
+    ?? throw new InvalidOperationException(
+        "Missing Auth:SigningKey. Set it via user-secrets locally or App Service configuration in prod - never commit it.");
+
 builder.Services.AddScoped<ITenantContext, TenantContext>();
+builder.Services.AddScoped<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
+builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 
 builder.Services.AddDbContext<TmsDbContext>(options =>
     options.UseNpgsql(connectionString));
@@ -32,6 +42,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             ValidIssuer = builder.Configuration["Auth:Issuer"],
             ValidAudience = builder.Configuration["Auth:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)),
+            ClockSkew = TimeSpan.FromSeconds(30),
         };
     });
 
