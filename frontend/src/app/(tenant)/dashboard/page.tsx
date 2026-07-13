@@ -15,6 +15,11 @@ interface Ticket {
   dueAt: string | null;
 }
 
+interface Category {
+  id: string;
+  name: string;
+}
+
 const STATUS_STYLES: Record<string, string> = {
   New: "bg-blue-100 text-blue-700",
   Open: "bg-amber-100 text-amber-700",
@@ -33,8 +38,17 @@ const PRIORITY_STYLES: Record<string, string> = {
 export default function TenantDashboardPage() {
   const router = useRouter();
   const [tickets, setTickets] = useState<Ticket[] | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
+
+  const [showCreate, setShowCreate] = useState(false);
+  const [subject, setSubject] = useState("");
+  const [description, setDescription] = useState("");
+  const [priority, setPriority] = useState("Medium");
+  const [categoryId, setCategoryId] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
     const auth = tenantAuth.get();
@@ -54,11 +68,50 @@ export default function TenantDashboardPage() {
         }
         setError(err instanceof ApiError ? err.message : "Couldn't load tickets.");
       });
+
+    apiFetch<Category[]>("/api/categories", { token: auth.accessToken })
+      .then(setCategories)
+      .catch(() => {
+        // Non-fatal: category dropdown just stays empty.
+      });
   }, [router]);
 
   function handleLogout() {
     tenantAuth.clear();
     router.replace("/login");
+  }
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    const auth = tenantAuth.get();
+    if (!auth) return;
+
+    setCreateError(null);
+    setCreating(true);
+    try {
+      const ticket = await apiFetch<Ticket>("/api/tickets", {
+        method: "POST",
+        token: auth.accessToken,
+        body: JSON.stringify({
+          subject,
+          description: description || null,
+          priority,
+          categoryId: categoryId || null,
+          assigneeId: null,
+          slaPolicyId: null,
+        }),
+      });
+      setTickets((prev) => (prev ? [ticket, ...prev] : [ticket]));
+      setSubject("");
+      setDescription("");
+      setPriority("Medium");
+      setCategoryId("");
+      setShowCreate(false);
+    } catch (err) {
+      setCreateError(err instanceof ApiError ? err.message : "Couldn't create ticket.");
+    } finally {
+      setCreating(false);
+    }
   }
 
   return (
@@ -68,15 +121,89 @@ export default function TenantDashboardPage() {
           <h1 className="text-lg font-semibold">Tickets</h1>
           {email && <p className="text-sm text-zinc-500">Signed in as {email}</p>}
         </div>
-        <button
-          onClick={handleLogout}
-          className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
-        >
-          Sign out
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowCreate((v) => !v)}
+            className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800"
+          >
+            {showCreate ? "Cancel" : "New ticket"}
+          </button>
+          <button
+            onClick={handleLogout}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+          >
+            Sign out
+          </button>
+        </div>
       </header>
 
-      <div className="p-8">
+      <div className="p-8 space-y-6">
+        {showCreate && (
+          <form
+            onSubmit={handleCreate}
+            className="rounded-lg border border-zinc-200 bg-white p-6 grid grid-cols-1 gap-4 sm:grid-cols-2"
+          >
+            <div className="sm:col-span-2">
+              <label className="block text-sm font-medium text-zinc-700 mb-1">Subject</label>
+              <input
+                required
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-sm font-medium text-zinc-700 mb-1">Description</label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-zinc-700 mb-1">Priority</label>
+              <select
+                value={priority}
+                onChange={(e) => setPriority(e.target.value)}
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+              >
+                <option value="Low">Low</option>
+                <option value="Medium">Medium</option>
+                <option value="High">High</option>
+                <option value="Urgent">Urgent</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-zinc-700 mb-1">Category</label>
+              <select
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+              >
+                <option value="">No category</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {createError && <p className="sm:col-span-2 text-sm text-red-600">{createError}</p>}
+
+            <div className="sm:col-span-2">
+              <button
+                type="submit"
+                disabled={creating}
+                className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+              >
+                {creating ? "Creating…" : "Create ticket"}
+              </button>
+            </div>
+          </form>
+        )}
+
         {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
 
         {tickets === null && !error && <p className="text-sm text-zinc-500">Loading tickets…</p>}
@@ -98,7 +225,11 @@ export default function TenantDashboardPage() {
               </thead>
               <tbody className="divide-y divide-zinc-100">
                 {tickets.map((t) => (
-                  <tr key={t.id}>
+                  <tr
+                    key={t.id}
+                    onClick={() => router.push(`/dashboard/tickets/${t.id}`)}
+                    className="cursor-pointer hover:bg-zinc-50"
+                  >
                     <td className="px-4 py-3 font-medium text-zinc-900">{t.subject}</td>
                     <td className="px-4 py-3">
                       <span
