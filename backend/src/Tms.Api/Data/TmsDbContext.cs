@@ -25,6 +25,7 @@ public class TmsDbContext : DbContext
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<SlaPolicy> SlaPolicies => Set<SlaPolicy>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<PlatformUser> PlatformUsers => Set<PlatformUser>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -72,9 +73,16 @@ public class TmsDbContext : DbContext
         modelBuilder.Entity<Tenant>()
             .Property(t => t.Status).HasConversion<string>();
 
+        modelBuilder.Entity<PlatformUser>()
+            .HasIndex(p => p.Email).IsUnique();
+        modelBuilder.Entity<PlatformUser>()
+            .Property(p => p.Role).HasConversion<string>();
+
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.
         // Auth endpoints that need to resolve a tenant before TenantId is known
         // (e.g. login by subdomain) use IgnoreQueryFilters() explicitly - see AuthController.
+        // PlatformUsers is likewise unfiltered - it has no TenantId at all, by design
+        // (platform staff are never members of a tenant).
     }
 }

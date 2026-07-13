@@ -17,12 +17,6 @@ public class JwtTokenService : IJwtTokenService
 
     public AccessTokenResult CreateAccessToken(AppUser user)
     {
-        var signingKey = _config["Auth:SigningKey"]
-            ?? throw new InvalidOperationException("Auth:SigningKey is not configured.");
-
-        var expiresMinutes = _config.GetValue<int?>("Auth:AccessTokenMinutes") ?? 15;
-        var expiresAt = DateTime.UtcNow.AddMinutes(expiresMinutes);
-
         var claims = new[]
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
@@ -31,6 +25,31 @@ public class JwtTokenService : IJwtTokenService
             new Claim(ClaimTypes.Role, user.Role.ToString()),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
+
+        return BuildToken(claims);
+    }
+
+    public AccessTokenResult CreatePlatformAccessToken(PlatformUser user)
+    {
+        var claims = new[]
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new Claim(JwtRegisteredClaimNames.Email, user.Email),
+            new Claim("scope", "platform_admin"),
+            new Claim("platform_role", user.Role.ToString()),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+        };
+
+        return BuildToken(claims);
+    }
+
+    private AccessTokenResult BuildToken(Claim[] claims)
+    {
+        var signingKey = _config["Auth:SigningKey"]
+            ?? throw new InvalidOperationException("Auth:SigningKey is not configured.");
+
+        var expiresMinutes = _config.GetValue<int?>("Auth:AccessTokenMinutes") ?? 15;
+        var expiresAt = DateTime.UtcNow.AddMinutes(expiresMinutes);
 
         var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(signingKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

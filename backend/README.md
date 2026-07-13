@@ -37,15 +37,19 @@ dotnet ef database update
 
 This reads the EF Core models (`Models/*.cs` + `Data/TmsDbContext.cs`) and
 creates `Tenants`, `Users`, `Tickets`, `TicketComments`, `Categories`,
-`SlaPolicies`, and `RefreshTokens` in the Neon `tms` database, each with the
-`TenantId` column and composite indexes described in the feature spec.
+`SlaPolicies`, `RefreshTokens`, and `PlatformUsers` in the Neon `tms`
+database, each tenant-scoped table with a `TenantId` column and composite
+indexes described in the feature spec. `PlatformUsers` has no `TenantId` at
+all - platform staff are never members of a tenant.
 
-After that, optionally run `docs/seed-dev-tenant.sql` against the same
-database (`psql "<connection string>" -f docs/seed-dev-tenant.sql`) to create
-one test tenant (`acme`) so you can call `/api/auth/register` locally —
-there's no self-serve tenant signup or Super Admin "create tenant" endpoint
-yet (Module 2 / Module 5.1), so a tenant has to exist before anyone can
-register into it.
+If you already ran `InitialCreate` before `PlatformUsers` existed, just run
+`dotnet ef migrations add AddPlatformUsers --output-dir Migrations && dotnet ef database update`
+to add it without touching existing data.
+
+For a real tenant, use the Super Admin API (see below) instead of hand-editing
+the database. `docs/seed-dev-tenant.sql` is still there for a quick throwaway
+test tenant (`acme`) if you just want to poke at `/api/auth/register` without
+going through the platform flow.
 
 ## Run it
 
@@ -77,6 +81,24 @@ Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bea
 - `GET /`
 - `POST /` — restricted to `Admin`/`Manager` roles
 
+**Platform Auth** (`/api/platform/auth`) — Module 5, Super Admin console
+- `POST /bootstrap` — `{ name, email, password }`. Only works once, while `PlatformUsers` is empty; creates the first `Owner`. 409 after that.
+- `POST /login` — `{ email, password }`.
+
+Both return `{ accessToken, accessTokenExpiresAtUtc, userId, email, role }`.
+No refresh token here yet (platform sessions are short-lived by design for
+this iteration — re-login when the 15 min access token expires).
+
+**Platform Tenants** (`/api/platform/tenants`) — Module 5.1, requires a platform token
+- `GET /`, `GET /{id}` — any platform role (`Owner`, `PlatformAdmin`, `SupportEngineer`, `BillingAdmin`, `ReadOnlyAnalyst`)
+- `POST /` — `{ name, subdomain, planId, trialDays? }`. `Owner`/`PlatformAdmin` only.
+- `POST /{id}/suspend`, `POST /{id}/reactivate` — `Owner`/`PlatformAdmin` only.
+
+A platform token carries `scope=platform_admin` + `platform_role=<PlatformRole>`
+and never a `tenant_id` claim, so it can't be used against `/api/tickets` etc.,
+and a tenant AppUser's token can't be used here — completely separate
+authorization surfaces by design.
+
 ## Multi-tenancy
 
 - Every tenant-scoped table has a `TenantId` column + composite index.
@@ -89,10 +111,10 @@ Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bea
   (apply it after running migrations — it references tables that must already exist).
 - Roles are the fixed `Role` enum (`Admin`, `Manager`, `Agent`, `ReadOnly`) for
   now — full custom roles/permissions are Phase 3 (Module 12) per the spec.
-- Super Admin endpoints (`/api/platform/*`) are not built yet — they'll need
-  a separate `PlatformUser` auth scheme, never reachable with a tenant JWT.
-  The `PlatformAdmin` authorization policy in `Program.cs` is a placeholder
-  for that.
+- Super Admin endpoints (`/api/platform/*`) use a separate `PlatformUser`
+  table/auth scheme (Module 5), never reachable with a tenant JWT. The
+  `PlatformAdmin` policy allows any platform role (read access); `PlatformManage`
+  additionally requires `platform_role` to be `Owner` or `PlatformAdmin` (write access).
 
 ## Deploy
 

@@ -22,6 +22,7 @@ var signingKey = builder.Configuration["Auth:SigningKey"]
 
 builder.Services.AddScoped<ITenantContext, TenantContext>();
 builder.Services.AddScoped<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
+builder.Services.AddScoped<IPasswordHasher<PlatformUser>, PasswordHasher<PlatformUser>>();
 builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 
 builder.Services.AddDbContext<TmsDbContext>(options =>
@@ -49,8 +50,15 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization(options =>
 {
+    // Any authenticated platform user (all 5 roles in PlatformRole) - read-only
+    // console access. Mutating actions (create/suspend/reactivate tenant) use
+    // the stricter PlatformManage policy below.
     options.AddPolicy("PlatformAdmin", policy =>
         policy.RequireClaim("scope", "platform_admin"));
+
+    options.AddPolicy("PlatformManage", policy =>
+        policy.RequireClaim("scope", "platform_admin")
+              .RequireClaim("platform_role", nameof(PlatformRole.Owner), nameof(PlatformRole.PlatformAdmin)));
 });
 
 builder.Services.AddCors(options =>
