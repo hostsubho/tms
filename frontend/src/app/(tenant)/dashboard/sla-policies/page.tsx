@@ -70,8 +70,11 @@ export default function SlaPoliciesPage() {
         token: auth.accessToken,
         body: JSON.stringify({
           name,
-          responseTargetMinutes: responseHours * 60,
-          resolutionTargetMinutes: resolutionHours * 60,
+          // Backend expects whole minutes; hour inputs like 0.5h/1.5h are
+          // common but anything that doesn't divide evenly (e.g. an errant
+          // 0.02) would otherwise send a fractional value the API 400s on.
+          responseTargetMinutes: Math.round(responseHours * 60),
+          resolutionTargetMinutes: Math.round(resolutionHours * 60),
           priority: priority || null,
         }),
       });
