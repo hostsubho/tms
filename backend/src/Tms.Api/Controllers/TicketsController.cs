@@ -11,7 +11,7 @@ namespace Tms.Api.Controllers;
 
 [ApiController]
 [Route("api/tickets")]
-[Authorize]
+[Authorize(Policy = "TenantStaff")]
 public class TicketsController : ControllerBase
 {
     private readonly TmsDbContext _db;

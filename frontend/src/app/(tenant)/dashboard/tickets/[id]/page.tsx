@@ -21,6 +21,9 @@ interface Ticket {
   escalated: boolean;
   isResolutionBreached: boolean;
   isResponseBreached: boolean;
+  customerId: string | null;
+  csatRating: number | null;
+  csatSubmittedAt: string | null;
 }
 
 interface Comment {
@@ -29,6 +32,7 @@ interface Comment {
   authorId: string;
   body: string;
   isInternal: boolean;
+  isFromCustomer: boolean;
   createdAt: string;
 }
 
@@ -243,6 +247,26 @@ export default function TicketDetailPage() {
           </div>
         )}
 
+        {ticket.customerId && (
+          <div className="rounded-lg border border-zinc-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-zinc-900 mb-2">Customer satisfaction</h2>
+            {ticket.csatSubmittedAt ? (
+              <p className="text-sm text-zinc-700">
+                <span className="text-amber-400">{"★".repeat(ticket.csatRating ?? 0)}</span>
+                <span className="text-zinc-300">{"★".repeat(5 - (ticket.csatRating ?? 0))}</span>
+                <span className="ml-2 text-xs text-zinc-400">
+                  rated {new Date(ticket.csatSubmittedAt).toLocaleString()} via the customer portal
+                </span>
+              </p>
+            ) : (
+              <p className="text-sm text-zinc-400">
+                Submitted through the customer portal — no rating yet
+                {["Resolved", "Closed"].includes(ticket.status) ? "" : " (ticket not yet resolved)"}.
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="rounded-lg border border-zinc-200 bg-white p-6">
           <h2 className="text-sm font-semibold text-zinc-900 mb-4">Comments</h2>
 
@@ -258,7 +282,11 @@ export default function TicketDetailPage() {
               >
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-medium text-zinc-500">
-                    {c.authorId === currentUserId ? "You" : `User ${c.authorId.slice(0, 8)}`}
+                    {c.isFromCustomer
+                      ? "Customer"
+                      : c.authorId === currentUserId
+                        ? "You"
+                        : `User ${c.authorId.slice(0, 8)}`}
                   </span>
                   <span className="flex items-center gap-2 text-xs text-zinc-400">
                     {c.isInternal && (

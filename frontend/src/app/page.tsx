@@ -25,9 +25,15 @@ export default function Home() {
         </a>
       </div>
 
-      <a href="/admin/login" className="mt-10 text-xs text-zinc-400 hover:text-zinc-600">
-        Platform admin sign in
-      </a>
+      <div className="mt-10 flex gap-4 text-xs text-zinc-400">
+        <a href="/portal/login" className="hover:text-zinc-600">
+          Customer support portal
+        </a>
+        <span>·</span>
+        <a href="/admin/login" className="hover:text-zinc-600">
+          Platform admin sign in
+        </a>
+      </div>
     </main>
   );
 }

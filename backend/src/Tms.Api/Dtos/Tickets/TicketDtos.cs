@@ -33,29 +33,33 @@ public record TicketResponse(
     Guid? RequesterId,
     Guid? AssigneeId,
     Guid? SlaPolicyId,
+    Guid? CustomerId,
     DateTime CreatedAt,
     DateTime? DueAt,
     DateTime? ResponseDueAt,
     DateTime? FirstRespondedAt,
     bool Escalated,
     bool IsResolutionBreached,
-    bool IsResponseBreached)
+    bool IsResponseBreached,
+    int? CsatRating,
+    DateTime? CsatSubmittedAt)
 {
     // utcNow threaded through explicitly (rather than each call re-reading
     // DateTime.UtcNow) so a whole ticket list evaluates breach status against
     // one consistent point in time instead of drifting mid-request.
     public static TicketResponse FromEntity(Ticket t, DateTime utcNow) => new(
         t.Id, t.Subject, t.Description, t.Status, t.Priority,
-        t.CategoryId, t.RequesterId, t.AssigneeId, t.SlaPolicyId, t.CreatedAt, t.DueAt,
+        t.CategoryId, t.RequesterId, t.AssigneeId, t.SlaPolicyId, t.CustomerId, t.CreatedAt, t.DueAt,
         t.ResponseDueAt, t.FirstRespondedAt, t.Escalated,
         SlaEvaluator.IsResolutionBreached(t, utcNow),
-        SlaEvaluator.IsResponseBreached(t, utcNow));
+        SlaEvaluator.IsResponseBreached(t, utcNow),
+        t.CsatRating, t.CsatSubmittedAt);
 }
 
 public record AddCommentRequest(string Body, bool IsInternal);
 
-public record CommentResponse(Guid Id, Guid TicketId, Guid AuthorId, string Body, bool IsInternal, DateTime CreatedAt)
+public record CommentResponse(Guid Id, Guid TicketId, Guid AuthorId, string Body, bool IsInternal, bool IsFromCustomer, DateTime CreatedAt)
 {
     public static CommentResponse FromEntity(TicketComment c) => new(
-        c.Id, c.TicketId, c.AuthorId, c.Body, c.IsInternal, c.CreatedAt);
+        c.Id, c.TicketId, c.AuthorId, c.Body, c.IsInternal, c.IsFromCustomer, c.CreatedAt);
 }

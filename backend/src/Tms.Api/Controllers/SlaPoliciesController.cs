@@ -13,7 +13,7 @@ namespace Tms.Api.Controllers;
 // write is restricted to Admin/Manager, same as Categories.
 [ApiController]
 [Route("api/sla-policies")]
-[Authorize]
+[Authorize(Policy = "TenantStaff")]
 public class SlaPoliciesController : ControllerBase
 {
     private readonly TmsDbContext _db;

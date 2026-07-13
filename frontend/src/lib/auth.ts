@@ -25,8 +25,20 @@ export interface PlatformAuth {
   role: string;
 }
 
+// Module 7 - Customer/End-User Portal. A third, separate auth surface: a
+// PortalCustomer, never a tenant AppUser or PlatformUser.
+export interface PortalAuth {
+  accessToken: string;
+  accessTokenExpiresAtUtc: string;
+  customerId: string;
+  name: string;
+  email: string;
+  tenantSlug: string;
+}
+
 const TENANT_KEY = "tms.tenantAuth";
 const PLATFORM_KEY = "tms.platformAuth";
+const PORTAL_KEY = "tms.portalAuth";
 
 function readJson<T>(key: string): T | null {
   if (typeof window === "undefined") return null;
@@ -59,4 +71,10 @@ export const platformAuth = {
   get: () => readJson<PlatformAuth>(PLATFORM_KEY),
   save: (auth: PlatformAuth) => writeJson(PLATFORM_KEY, auth),
   clear: () => clearKey(PLATFORM_KEY),
+};
+
+export const portalAuth = {
+  get: () => readJson<PortalAuth>(PORTAL_KEY),
+  save: (auth: PortalAuth) => writeJson(PORTAL_KEY, auth),
+  clear: () => clearKey(PORTAL_KEY),
 };

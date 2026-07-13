@@ -10,7 +10,7 @@ public record CreateCategoryRequest(string Name, Guid? ParentCategoryId);
 
 [ApiController]
 [Route("api/categories")]
-[Authorize]
+[Authorize(Policy = "TenantStaff")]
 public class CategoriesController : ControllerBase
 {
     private readonly TmsDbContext _db;

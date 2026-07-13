@@ -13,7 +13,7 @@ namespace Tms.Api.Controllers;
 // tenant_id claim), the same as every other tenant-scoped controller.
 [ApiController]
 [Route("api/tenant")]
-[Authorize]
+[Authorize(Policy = "TenantStaff")]
 public class TenantController : ControllerBase
 {
     private readonly TmsDbContext _db;

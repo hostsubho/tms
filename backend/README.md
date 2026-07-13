@@ -51,6 +51,11 @@ Module 4 (SLA Management) adds `ResponseDueAt`, `FirstRespondedAt`, `Escalated`
 to `Tickets` and `Priority` to `SlaPolicies`:
 `dotnet ef migrations add AddSlaFields --output-dir Migrations && dotnet ef database update`
 
+Module 7 (Customer/End-User Portal) adds a new `PortalCustomers` table,
+`CustomerId`/`CsatRating`/`CsatSubmittedAt` to `Tickets`, and `IsFromCustomer`
+to `TicketComments`:
+`dotnet ef migrations add AddCustomerPortal --output-dir Migrations && dotnet ef database update`
+
 Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
 required FK and there's no admin UI for creating plans yet:
 `psql "<connection string>" -f docs/seed-plans.sql`
@@ -96,7 +101,7 @@ Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bea
 - `GET /{id}` — same lazy breach/escalation check as the list, scoped to this ticket.
 - `POST /` — creates a ticket; `TenantId`/`RequesterId`/`SlaPolicyId` are always set server-side, never from the request body. `SlaPolicyId` is auto-matched from the tenant's SLA policies by the ticket's `Priority` (see Module 4).
 - `PATCH /{id}` — partial update (status, priority, assignee, etc.). Does **not** recompute `DueAt`/`ResponseDueAt` — SLA due dates are a one-time commitment made at creation.
-- `GET /{id}/comments`, `POST /{id}/comments` — `isInternal` flag separates agent notes from customer-visible replies. The first comment on a ticket (of any kind) sets `FirstRespondedAt`, used for response-SLA breach detection.
+- `GET /{id}/comments`, `POST /{id}/comments` — `isInternal` flag separates agent notes from customer-visible replies; every comment posted here (the staff surface) sets `FirstRespondedAt` the first time, used for response-SLA breach detection. Comments posted through the customer portal (`/api/portal/tickets/{id}/comments`, Module 7) do **not** advance `FirstRespondedAt` — it measures how fast staff reply to the customer, not the customer's own messages.
 
 **Categories** (`/api/categories`)
 - `GET /`
@@ -108,6 +113,18 @@ Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bea
 - `PATCH /{id}` — update name/targets. `Admin`/`Manager` only. Priority can't be changed after creation (delete and recreate instead).
 - `DELETE /{id}` — `Admin`/`Manager` only. Tickets already assigned to a deleted policy keep their already-computed due dates.
 - Every `TicketResponse` includes `dueAt` (resolution target), `responseDueAt`, `firstRespondedAt`, `escalated`, `isResolutionBreached`, `isResponseBreached`. Breach detection and escalation (bump priority one level, once) run lazily whenever a ticket is read via `GET /api/tickets` or `GET /api/tickets/{id}` — there's no background worker in this deployment, so a breach is only caught the next time someone views the ticket or list, not the instant it happens.
+
+**Portal Auth** (`/api/portal/auth`) — Module 7, Customer/End-User Portal
+- `POST /register` — `{ tenantSlug, name, email, password }`. Creates a `PortalCustomer` scoped to the tenant and returns a token immediately. Entirely separate table/identity from `AppUser` — a portal customer is an external end user, never tenant staff.
+- `POST /login` — `{ tenantSlug, email, password }`.
+- Both return `{ accessToken, accessTokenExpiresAtUtc, customerId, name, email }`. No refresh token (same short-lived-by-design tradeoff as Platform Auth below) — re-login when the 15 min access token expires.
+- Tokens carry `scope=portal_customer` + `tenant_id` + `customer_id`, no `Role` claim — can't satisfy staff `[Authorize(Roles=...)]` checks or the `PlatformAdmin`/`PlatformManage` policies, and those tokens can't satisfy the `PortalCustomer` policy either. Three JWT scopes, one signing key, mutually exclusive by claim shape.
+
+**Portal Tickets** (`/api/portal/tickets`) — Module 7, requires a portal customer token
+- `GET /`, `GET /{id}` — only tickets where `customerId` matches the caller; same lazy SLA breach/escalation check as the staff surface, but the response (`PortalTicketResponse`) deliberately omits internal SLA-ops fields like `escalated`/`isResolutionBreached`/`assigneeId` — a customer sees status, priority, `dueAt`, and their own CSAT state, not internal escalation mechanics.
+- `POST /` — `{ subject, description, priority }`. `customerId`/`tenantId` always set server-side; SLA policy matching works identically to the staff `POST /api/tickets`.
+- `GET /{id}/comments`, `POST /{id}/comments` — `{ body }` only; `isInternal` is always `false` and can't be set by the customer, and `GET` never returns internal notes even if requested directly.
+- `POST /{id}/csat` — `{ rating: 1-5 }`. Only allowed once the ticket is `Resolved`/`Closed`, and only once per ticket (409 on a second attempt).
 
 **Platform Auth** (`/api/platform/auth`) — Module 5, Super Admin console
 - `POST /bootstrap` — `{ name, email, password }`. Only works once, while `PlatformUsers` is empty; creates the first `Owner`. 409 after that.
@@ -139,6 +156,16 @@ authorization surfaces by design.
   (apply it after running migrations — it references tables that must already exist).
 - Roles are the fixed `Role` enum (`Admin`, `Manager`, `Agent`, `ReadOnly`) for
   now — full custom roles/permissions are Phase 3 (Module 12) per the spec.
+- Staff-facing tenant controllers (`TicketsController`, `TenantController`,
+  `SlaPoliciesController`, `CategoriesController`) use `[Authorize(Policy =
+  "TenantStaff")]`, **not** bare `[Authorize]`. This matters as of Module 7:
+  a bare `[Authorize]` only checks `IsAuthenticated`, and a portal customer's
+  token now carries a valid `tenant_id` claim (same as staff), so without the
+  `TenantStaff` policy a customer could reach the full staff ticket queue,
+  including internal-only notes. `TenantStaff` requires the `Role` claim to
+  be present at all — only `AppUser` tokens ever set it (see
+  `JwtTokenService.CreateAccessToken`); `PlatformUser` and `PortalCustomer`
+  tokens never do, so both are excluded by construction.
 - Super Admin endpoints (`/api/platform/*`) use a separate `PlatformUser`
   table/auth scheme (Module 5), never reachable with a tenant JWT. The
   `PlatformAdmin` policy allows any platform role (read access); `PlatformManage`

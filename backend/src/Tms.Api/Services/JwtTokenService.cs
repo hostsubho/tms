@@ -43,6 +43,21 @@ public class JwtTokenService : IJwtTokenService
         return BuildToken(claims);
     }
 
+    public AccessTokenResult CreatePortalCustomerAccessToken(PortalCustomer customer)
+    {
+        var claims = new[]
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, customer.Id.ToString()),
+            new Claim(JwtRegisteredClaimNames.Email, customer.Email),
+            new Claim("scope", "portal_customer"),
+            new Claim("tenant_id", customer.TenantId.ToString()),
+            new Claim("customer_id", customer.Id.ToString()),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+        };
+
+        return BuildToken(claims);
+    }
+
     private AccessTokenResult BuildToken(Claim[] claims)
     {
         var signingKey = _config["Auth:SigningKey"]

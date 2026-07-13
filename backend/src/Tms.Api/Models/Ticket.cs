@@ -17,6 +17,19 @@ public class Ticket
     public Guid? SlaPolicyId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    // Module 7 - Customer/End-User Portal. Distinct from RequesterId (which
+    // is set when a staff AppUser logs a ticket on someone's behalf, e.g.
+    // over the phone): CustomerId is set when the ticket was created by an
+    // external PortalCustomer through their own self-service login. A ticket
+    // has at most one of the two set as its "owner" depending on intake
+    // channel; both are nullable so neither path breaks the other.
+    public Guid? CustomerId { get; set; }
+
+    // CSAT survey (Module 7). Only settable once, and only once the ticket
+    // is Resolved/Closed - enforced in PortalTicketsController, not here.
+    public int? CsatRating { get; set; }
+    public DateTime? CsatSubmittedAt { get; set; }
+
     // Module 4 - SLA Management. DueAt is the resolution target; ResponseDueAt
     // the (earlier) first-response target. Both are computed once at creation
     // time from the matched SlaPolicy and never recalculated afterwards, even

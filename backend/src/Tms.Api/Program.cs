@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -24,6 +25,7 @@ var signingKey = builder.Configuration["Auth:SigningKey"]
 builder.Services.AddScoped<ITenantContext, TenantContext>();
 builder.Services.AddScoped<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
 builder.Services.AddScoped<IPasswordHasher<PlatformUser>, PasswordHasher<PlatformUser>>();
+builder.Services.AddScoped<IPasswordHasher<PortalCustomer>, PasswordHasher<PortalCustomer>>();
 builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 
 builder.Services.AddDbContext<TmsDbContext>(options =>
@@ -65,6 +67,26 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("PlatformManage", policy =>
         policy.RequireClaim("scope", "platform_admin")
               .RequireClaim("platform_role", nameof(PlatformRole.Owner), nameof(PlatformRole.PlatformAdmin)));
+
+    // Module 7 - Customer/End-User Portal. A portal customer's token carries
+    // scope=portal_customer and nothing else that would satisfy the policies
+    // above or a staff [Authorize(Roles = ...)] check - see JwtTokenService.
+    options.AddPolicy("PortalCustomer", policy =>
+        policy.RequireClaim("scope", "portal_customer"));
+
+    // Every tenant-scoped staff controller (Tickets, Tenant, SlaPolicies,
+    // Categories) must use this policy instead of a bare [Authorize] at the
+    // controller level. Bare [Authorize] only checks IsAuthenticated - it
+    // does NOT inspect the Role claim, so before this policy existed, a
+    // portal customer's token (which now carries a valid tenant_id claim,
+    // same as a staff AppUser token) could pass a bare [Authorize] check and
+    // reach the full tenant-wide staff endpoints, including internal-only
+    // comments, under its own valid tenant context. Only AppUser tokens ever
+    // carry a Role claim (see JwtTokenService.CreateAccessToken) - Platform
+    // and Portal tokens never do - so requiring its mere presence (any
+    // value) is enough to exclude both non-staff token types here.
+    options.AddPolicy("TenantStaff", policy =>
+        policy.RequireClaim(ClaimTypes.Role));
 });
 
 builder.Services.AddCors(options =>

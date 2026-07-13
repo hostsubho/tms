@@ -27,6 +27,7 @@ public class TmsDbContext : DbContext
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<PlatformUser> PlatformUsers => Set<PlatformUser>();
     public DbSet<Plan> Plans => Set<Plan>();
+    public DbSet<PortalCustomer> PortalCustomers => Set<PortalCustomer>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -83,6 +84,14 @@ public class TmsDbContext : DbContext
 
         modelBuilder.Entity<Plan>()
             .HasIndex(p => p.Name).IsUnique();
+
+        // PortalCustomers is tenant-scoped the same way AppUsers is - unique
+        // per (TenantId, Email) so the same person can hold separate accounts
+        // across different tenants' portals.
+        modelBuilder.Entity<PortalCustomer>()
+            .HasIndex(c => new { c.TenantId, c.Email }).IsUnique();
+        modelBuilder.Entity<PortalCustomer>()
+            .HasQueryFilter(c => c.TenantId == _tenantContext.TenantId);
 
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.
