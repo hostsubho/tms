@@ -17,12 +17,14 @@ public class TicketsController : ControllerBase
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
     private readonly INotificationService _notifications;
+    private readonly IRuleEngineService _ruleEngine;
 
-    public TicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications)
+    public TicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications, IRuleEngineService ruleEngine)
     {
         _db = db;
         _tenantContext = tenantContext;
         _notifications = notifications;
+        _ruleEngine = ruleEngine;
     }
 
     [HttpGet]
@@ -128,9 +130,17 @@ public class TicketsController : ControllerBase
 
         _db.Tickets.Add(ticket);
 
+        // Module 5 - Workflow Automation: runs before the notify-on-create
+        // block below, so if a rule auto-assigns this ticket (or changes its
+        // priority/status), the notification logic sees the *final* state -
+        // e.g. a rule-assigned ticket correctly notifies that assignee
+        // instead of falling through to "every Admin."
+        await _ruleEngine.RunTriggerAsync(tenantId, AutomationTrigger.TicketCreated, ticket, ct);
+
         // Module 8 - Notifications: a brand new ticket needs someone to
-        // triage it. If it was created pre-assigned, tell that assignee
-        // directly; otherwise every Admin gets a heads-up.
+        // triage it. If it was created pre-assigned (by the request or by an
+        // automation rule above), tell that assignee directly; otherwise
+        // every Admin gets a heads-up.
         if (ticket.AssigneeId is not null)
         {
             await _notifications.NotifyUserAsync(tenantId, ticket.AssigneeId.Value, NotificationType.TicketAssigned,
@@ -162,33 +172,28 @@ public class TicketsController : ControllerBase
         if (request.Description is not null) ticket.Description = request.Description;
         if (request.Status is not null)
         {
-            ticket.Status = request.Status.Value;
-
-            // Module 9 - Reporting & Analytics: stamp/clear ResolvedAt on the
-            // same transition rather than in a separate pass, so it can never
-            // drift out of sync with Status. Reopening a ticket (moving back
-            // to New/Open/Pending) clears it - resolution-time metrics should
-            // reflect the ticket's current resolve, not a stale one from
-            // before it was reopened.
-            if (ticket.Status is TicketStatus.Resolved or TicketStatus.Closed)
-            {
-                ticket.ResolvedAt ??= DateTime.UtcNow;
-            }
-            else
-            {
-                ticket.ResolvedAt = null;
-            }
+            // Stamps/clears ResolvedAt as part of the same transition - see
+            // TicketStatusTransition for why this lives in one shared place.
+            TicketStatusTransition.ApplyStatus(ticket, request.Status.Value);
         }
         if (request.Priority is not null) ticket.Priority = request.Priority.Value;
         if (request.CategoryId is not null) ticket.CategoryId = request.CategoryId;
         if (request.AssigneeId is not null) ticket.AssigneeId = request.AssigneeId;
 
-        // Module 8 - Notifications: only fire when the assignee actually
-        // changed to someone new - not on every PATCH that happens to
+        // Module 5 - Workflow Automation: runs after the request's own
+        // field changes are applied (so conditions see the ticket's new
+        // state, e.g. a rule matching on the priority this same PATCH just
+        // set) and before the reassignment-notify check below, so a
+        // rule-driven reassignment is notified exactly like a manual one.
+        await _ruleEngine.RunTriggerAsync(tenantId, AutomationTrigger.TicketUpdated, ticket, ct);
+
+        // Module 8 - Notifications: fire when the assignee actually changed
+        // to someone new - whether from this PATCH's own AssigneeId or from
+        // an automation rule above - not on every PATCH that happens to
         // re-send the same AssigneeId alongside an unrelated status change.
-        if (request.AssigneeId is not null && request.AssigneeId != previousAssigneeId)
+        if (ticket.AssigneeId is not null && ticket.AssigneeId != previousAssigneeId)
         {
-            await _notifications.NotifyUserAsync(tenantId, request.AssigneeId.Value, NotificationType.TicketAssigned,
+            await _notifications.NotifyUserAsync(tenantId, ticket.AssigneeId.Value, NotificationType.TicketAssigned,
                 $"You were assigned '{ticket.Subject}'.", ticket.Id, ct);
         }
 

@@ -29,6 +29,8 @@ public class TmsDbContext : DbContext
     public DbSet<Plan> Plans => Set<Plan>();
     public DbSet<PortalCustomer> PortalCustomers => Set<PortalCustomer>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<AutomationRule> AutomationRules => Set<AutomationRule>();
+    public DbSet<AutomationRuleLog> AutomationRuleLogs => Set<AutomationRuleLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -118,6 +120,25 @@ public class TmsDbContext : DbContext
             .HasQueryFilter(n => n.TenantId == _tenantContext.TenantId);
         modelBuilder.Entity<Notification>()
             .Property(n => n.Type).HasConversion<string>();
+
+        // Module 5 - Workflow Automation & Business Rules. Rules are looked
+        // up per (TenantId, Trigger, IsActive) on every matching event, so
+        // that's the index; logs are read back per tenant, newest first.
+        modelBuilder.Entity<AutomationRule>()
+            .HasIndex(r => new { r.TenantId, r.Trigger, r.IsActive });
+        modelBuilder.Entity<AutomationRule>()
+            .HasQueryFilter(r => r.TenantId == _tenantContext.TenantId);
+        modelBuilder.Entity<AutomationRule>()
+            .Property(r => r.Trigger).HasConversion<string>();
+        modelBuilder.Entity<AutomationRule>()
+            .Property(r => r.ConditionField).HasConversion<string>();
+        modelBuilder.Entity<AutomationRule>()
+            .Property(r => r.ActionType).HasConversion<string>();
+
+        modelBuilder.Entity<AutomationRuleLog>()
+            .HasIndex(l => new { l.TenantId, l.FiredAt });
+        modelBuilder.Entity<AutomationRuleLog>()
+            .HasQueryFilter(l => l.TenantId == _tenantContext.TenantId);
 
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.

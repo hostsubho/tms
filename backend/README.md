@@ -63,6 +63,9 @@ Module 8 (Notifications) adds a new `Notifications` table and
 Module 9 (Reporting & Analytics) adds `ResolvedAt` to `Tickets`:
 `dotnet ef migrations add AddTicketResolvedAt --output-dir Migrations && dotnet ef database update`
 
+Module 5 (Workflow Automation & Business Rules) adds `AutomationRules` and `AutomationRuleLogs`:
+`dotnet ef migrations add AddAutomationRules --output-dir Migrations && dotnet ef database update`
+
 Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
 required FK and there's no admin UI for creating plans yet:
 `psql "<connection string>" -f docs/seed-plans.sql`
@@ -146,7 +149,17 @@ Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bea
 - Only tenant-level dashboards are built in this iteration. Scheduled PDF/CSV exports and the enterprise-tier custom report builder (also listed under Module 9 in the spec) need an email/scheduling backend this deployment doesn't have yet.
 - `SlaEvaluator.IsResolutionBreached` was corrected alongside this: it now judges a resolved/closed ticket's breach status against its `ResolvedAt` timestamp, not `utcNow`. Previously, a ticket resolved comfortably inside its SLA window would flip to "breached" the moment someone viewed it after the due date had since passed in real time — purely an artifact of when it was looked at, not what actually happened. This affected the live `isResolutionBreached` field on every `TicketResponse`/`PortalTicketResponse` too, not just this report.
 
-**Platform Auth** (`/api/platform/auth`) — Module 5, Super Admin console
+**Users** (`/api/users`) — requires the `TenantStaff` policy
+- `GET /` — active tenant staff (id, email, role). No invite/deactivate/role-change endpoints yet - this exists only so a UI can let someone pick a specific teammate (the automation rule builder's "assign to agent" action, below) instead of requiring a hand-typed GUID.
+
+**Automation Rules** (`/api/automation-rules`) — Module 5, requires the `TenantStaff` policy; write (`POST`/`PATCH`/`DELETE`) restricted to `Admin`/`Manager`
+- Scoped down from the full spec (see `docs/tms_spec.md` Module 5): one condition per rule (field + value), not full AND/OR condition groups; triggers limited to `TicketCreated`, `TicketUpdated`, `CustomerReplyReceived` — "SLA about to breach" needs proactive scanning ahead of a deadline, which this deployment has no scheduler to run, so it's left out. "Keyword in description" from the spec's trigger list is modeled as a *condition* (`DescriptionContains`) on `TicketCreated`, not a standalone trigger.
+- Actions: `SetPriority`, `SetStatus`, `AssignToAgent` (a specific user), `AssignRoundRobin` (least currently-open-ticket-count active `Agent`-role user), `Notify` (a message to every `Admin`). "Run webhook" is left out — arbitrary outbound HTTP from tenant-configurable rules is an SSRF surface needing its own security review before shipping. Approval workflows are a distinct enough feature (sign-off state, not a trigger/action pair) for a later pass.
+- Rules run synchronously, inline, at the exact point each event already happens — `POST /api/tickets`, `PATCH /api/tickets/{id}`, `POST /api/portal/tickets`, `POST /api/portal/tickets/{id}/comments` — same lazy/no-cron convention as SLA breach detection and Notifications. They run *before* the existing notification logic at each call site, so a rule-driven reassignment is picked up by the same "notify the assignee" check a manual reassignment triggers, rather than needing its own separate notification path.
+- `GET /` — list rules (any tenant staff). `POST /` — create (`Trigger` fixed at creation, like `SlaPolicy.Priority`). `PATCH /{id}` — edit name/condition/action/active state. `DELETE /{id}` — removes the rule; past log entries for it remain, now showing "(deleted rule)".
+- `GET /logs` — most recent 100 rule firings tenant-wide, newest first — the audit trail the spec's "done when" bar for this module asks for ("a tenant admin can build a rule with no code and see it fire correctly in the audit log").
+
+**Platform Auth** (`/api/platform/auth`) — Super Admin console (spec section 5, distinct from Module 5's workflow automation above)
 - `POST /bootstrap` — `{ name, email, password }`. Only works once, while `PlatformUsers` is empty; creates the first `Owner`. 409 after that.
 - `POST /login` — `{ email, password }`.
 
@@ -154,7 +167,7 @@ Both return `{ accessToken, accessTokenExpiresAtUtc, userId, email, role }`.
 No refresh token here yet (platform sessions are short-lived by design for
 this iteration — re-login when the 15 min access token expires).
 
-**Platform Tenants** (`/api/platform/tenants`) — Module 5.1, requires a platform token
+**Platform Tenants** (`/api/platform/tenants`) — Super Admin section 5.1, requires a platform token
 - `GET /`, `GET /{id}` — any platform role (`Owner`, `PlatformAdmin`, `SupportEngineer`, `BillingAdmin`, `ReadOnlyAnalyst`)
 - `POST /` — `{ name, subdomain, planId, trialDays? }`. `Owner`/`PlatformAdmin` only.
 - `POST /{id}/suspend`, `POST /{id}/reactivate` — `Owner`/`PlatformAdmin` only.
@@ -187,7 +200,7 @@ authorization surfaces by design.
   `JwtTokenService.CreateAccessToken`); `PlatformUser` and `PortalCustomer`
   tokens never do, so both are excluded by construction.
 - Super Admin endpoints (`/api/platform/*`) use a separate `PlatformUser`
-  table/auth scheme (Module 5), never reachable with a tenant JWT. The
+  table/auth scheme (spec section 5), never reachable with a tenant JWT. The
   `PlatformAdmin` policy allows any platform role (read access); `PlatformManage`
   additionally requires `platform_role` to be `Owner` or `PlatformAdmin` (write access).
 

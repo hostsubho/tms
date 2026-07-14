@@ -22,12 +22,14 @@ public class PortalTicketsController : ControllerBase
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
     private readonly INotificationService _notifications;
+    private readonly IRuleEngineService _ruleEngine;
 
-    public PortalTicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications)
+    public PortalTicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications, IRuleEngineService ruleEngine)
     {
         _db = db;
         _tenantContext = tenantContext;
         _notifications = notifications;
+        _ruleEngine = ruleEngine;
     }
 
     [HttpGet]
@@ -117,11 +119,26 @@ public class PortalTicketsController : ControllerBase
 
         _db.Tickets.Add(ticket);
 
+        // Module 5 - Workflow Automation: a portal-submitted ticket can be
+        // auto-assigned/reprioritized by a TicketCreated rule exactly like a
+        // staff-created one - intake channel shouldn't change which rules
+        // apply.
+        await _ruleEngine.RunTriggerAsync(tenantId, AutomationTrigger.TicketCreated, ticket, ct);
+
         // Module 8 - Notifications: a customer-submitted ticket has no
-        // assignee yet by definition (portal customers can't set one), so
-        // every Admin gets notified to triage it.
-        await _notifications.NotifyAdminsAsync(tenantId, NotificationType.NewTicket,
-            $"New ticket from the customer portal: '{ticket.Subject}'.", ticket.Id, ct);
+        // assignee unless an automation rule above just gave it one - notify
+        // that assignee directly if so, otherwise every Admin gets notified
+        // to triage it (the previous, pre-automation default).
+        if (ticket.AssigneeId is not null)
+        {
+            await _notifications.NotifyUserAsync(tenantId, ticket.AssigneeId.Value, NotificationType.TicketAssigned,
+                $"You were assigned '{ticket.Subject}'.", ticket.Id, ct);
+        }
+        else
+        {
+            await _notifications.NotifyAdminsAsync(tenantId, NotificationType.NewTicket,
+                $"New ticket from the customer portal: '{ticket.Subject}'.", ticket.Id, ct);
+        }
 
         await _db.SaveChangesAsync(ct);
 
@@ -174,11 +191,19 @@ public class PortalTicketsController : ControllerBase
         // customer's own messages. Only TicketsController.AddComment (the
         // staff surface) advances it.
 
+        // Module 5 - Workflow Automation: e.g. a rule that auto-assigns a
+        // ticket the moment its customer replies, if it's still sitting
+        // unassigned. Runs before the notify-assignee check below, so a
+        // rule-driven assignment here also gets told about the reply that
+        // triggered it.
+        await _ruleEngine.RunTriggerAsync(tenantId, AutomationTrigger.CustomerReplyReceived, ticket, ct);
+
         // Module 8 - Notifications: tell the assignee a customer replied.
-        // If nobody's assigned yet, this reply just sits in the queue same
-        // as it always did - there's no "notify all agents" fallback here,
-        // unlike NewTicket/SlaBreach, since a reply on an unassigned ticket
-        // isn't a new event for the whole team the way a fresh ticket is.
+        // If nobody's assigned yet (still, even after automation above),
+        // this reply just sits in the queue same as it always did - there's
+        // no "notify all agents" fallback here, unlike NewTicket/SlaBreach,
+        // since a reply on an unassigned ticket isn't a new event for the
+        // whole team the way a fresh ticket is.
         if (ticket.AssigneeId is not null)
         {
             await _notifications.NotifyUserAsync(tenantId, ticket.AssigneeId.Value, NotificationType.NewComment,
