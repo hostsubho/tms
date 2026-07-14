@@ -66,6 +66,9 @@ Module 9 (Reporting & Analytics) adds `ResolvedAt` to `Tickets`:
 Module 5 (Workflow Automation & Business Rules) adds `AutomationRules` and `AutomationRuleLogs`:
 `dotnet ef migrations add AddAutomationRules --output-dir Migrations && dotnet ef database update`
 
+Module 6 (Knowledge Base) adds `KnowledgeArticles` and `KnowledgeArticleVersions`:
+`dotnet ef migrations add AddKnowledgeBase --output-dir Migrations && dotnet ef database update`
+
 Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
 required FK and there's no admin UI for creating plans yet:
 `psql "<connection string>" -f docs/seed-plans.sql`
@@ -158,6 +161,16 @@ Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bea
 - Rules run synchronously, inline, at the exact point each event already happens — `POST /api/tickets`, `PATCH /api/tickets/{id}`, `POST /api/portal/tickets`, `POST /api/portal/tickets/{id}/comments` — same lazy/no-cron convention as SLA breach detection and Notifications. They run *before* the existing notification logic at each call site, so a rule-driven reassignment is picked up by the same "notify the assignee" check a manual reassignment triggers, rather than needing its own separate notification path.
 - `GET /` — list rules (any tenant staff). `POST /` — create (`Trigger` fixed at creation, like `SlaPolicy.Priority`). `PATCH /{id}` — edit name/condition/action/active state. `DELETE /{id}` — removes the rule; past log entries for it remain, now showing "(deleted rule)".
 - `GET /logs` — most recent 100 rule firings tenant-wide, newest first — the audit trail the spec's "done when" bar for this module asks for ("a tenant admin can build a rule with no code and see it fire correctly in the audit log").
+
+**Knowledge Articles** (`/api/knowledge-articles`) — Module 6, requires the `TenantStaff` policy; write (`POST`/`PATCH`/`DELETE`) restricted to `Admin`/`Manager`
+- Scoped down from the full spec (see `docs/tms_spec.md` Module 6): "versioning" is a plain history list, not diff/rollback; "suggested articles" is in-memory keyword scoring (`KnowledgeSuggestionMatcher`), not a real search index; helpfulness feedback is an anonymous counter, not deduplicated per customer.
+- `GET /` — every article (public and internal), any tenant staff. `GET /{id}` — single article. `POST /` — `{ title, body, isPublic, categoryId? }`. `PATCH /{id}` — partial update; if `title` or `body` changes, the *previous* values are snapshotted to `KnowledgeArticleVersions` first. `DELETE /{id}` — removes the article; its version history stays, now pointing at a deleted article, same convention as `AutomationRuleLog` keeping a dangling `RuleId`.
+- `GET /{id}/versions` — history for one article, newest first.
+
+**Portal Knowledge** (`/api/portal/knowledge-articles`) — Module 6, requires a portal customer token; only ever returns `IsPublic` articles
+- `GET /?query=...` — keyword-ranked suggestions for a ticket subject (title matches weighted 3x over body matches); with no `query`, falls back to the tenant's most-viewed public articles. Powers the portal's "these articles might already answer your question" panel as a customer types a new ticket's subject.
+- `GET /{id}` — full article body; increments `ViewCount`.
+- `POST /{id}/feedback` — `{ helpful: bool }`; increments `HelpfulYesCount`/`HelpfulNoCount`.
 
 **Platform Auth** (`/api/platform/auth`) — Super Admin console (spec section 5, distinct from Module 5's workflow automation above)
 - `POST /bootstrap` — `{ name, email, password }`. Only works once, while `PlatformUsers` is empty; creates the first `Owner`. 409 after that.

@@ -18,6 +18,20 @@ interface PortalTicket {
   csatSubmittedAt: string | null;
 }
 
+interface ArticleSummary {
+  id: string;
+  title: string;
+  snippet: string;
+}
+
+interface ArticleDetail {
+  id: string;
+  title: string;
+  body: string;
+  helpfulYesCount: number;
+  helpfulNoCount: number;
+}
+
 const STATUS_STYLES: Record<string, string> = {
   New: "bg-blue-100 text-blue-700",
   Open: "bg-amber-100 text-amber-700",
@@ -40,6 +54,12 @@ export default function PortalTicketsPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
+  // Module 6 - Knowledge Base deflection: as the customer types a subject,
+  // show relevant self-service articles before they even submit the ticket.
+  const [suggestions, setSuggestions] = useState<ArticleSummary[]>([]);
+  const [expandedArticle, setExpandedArticle] = useState<ArticleDetail | null>(null);
+  const [feedbackGiven, setFeedbackGiven] = useState(false);
+
   useEffect(() => {
     const auth = portalAuth.get();
     if (!auth) {
@@ -60,6 +80,57 @@ export default function PortalTicketsPage() {
         setError(err instanceof ApiError ? err.message : "Couldn't load your tickets.");
       });
   }, [router]);
+
+  // Debounced so every keystroke doesn't fire a request - waits 400ms of no
+  // typing, and only searches once there's enough of a subject to score
+  // against (matches the backend's own 3-character-minimum word filter).
+  useEffect(() => {
+    if (!showCreate || subject.trim().length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    const auth = portalAuth.get();
+    if (!auth) return;
+
+    const handle = setTimeout(() => {
+      apiFetch<ArticleSummary[]>(`/api/portal/knowledge-articles?query=${encodeURIComponent(subject)}`, {
+        token: auth.accessToken,
+      })
+        .then(setSuggestions)
+        .catch(() => {
+          // Non-fatal: suggestions just don't show up.
+        });
+    }, 400);
+
+    return () => clearTimeout(handle);
+  }, [subject, showCreate]);
+
+  async function handleViewArticle(id: string) {
+    const auth = portalAuth.get();
+    if (!auth) return;
+    setFeedbackGiven(false);
+    try {
+      const article = await apiFetch<ArticleDetail>(`/api/portal/knowledge-articles/${id}`, { token: auth.accessToken });
+      setExpandedArticle(article);
+    } catch {
+      // Non-fatal: article just doesn't expand.
+    }
+  }
+
+  async function handleFeedback(helpful: boolean) {
+    const auth = portalAuth.get();
+    if (!auth || !expandedArticle) return;
+    setFeedbackGiven(true);
+    try {
+      await apiFetch(`/api/portal/knowledge-articles/${expandedArticle.id}/feedback`, {
+        method: "POST",
+        token: auth.accessToken,
+        body: JSON.stringify({ helpful }),
+      });
+    } catch {
+      // Non-fatal: the vote just doesn't register.
+    }
+  }
 
   function handleLogout() {
     portalAuth.clear();
@@ -84,6 +155,8 @@ export default function PortalTicketsPage() {
       setDescription("");
       setPriority("Medium");
       setShowCreate(false);
+      setSuggestions([]);
+      setExpandedArticle(null);
     } catch (err) {
       setCreateError(err instanceof ApiError ? err.message : "Couldn't create ticket.");
     } finally {
@@ -136,10 +209,66 @@ export default function PortalTicketsPage() {
               <input
                 required
                 value={subject}
-                onChange={(e) => setSubject(e.target.value)}
+                onChange={(e) => {
+                  setSubject(e.target.value);
+                  setExpandedArticle(null);
+                }}
                 className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
               />
             </div>
+
+            {suggestions.length > 0 && (
+              <div className="sm:col-span-2 rounded-md border border-blue-100 bg-blue-50 p-4">
+                <p className="mb-2 text-xs font-medium uppercase text-blue-700">
+                  These articles might already answer your question
+                </p>
+                <ul className="space-y-1">
+                  {suggestions.map((s) => (
+                    <li key={s.id}>
+                      <button
+                        type="button"
+                        onClick={() => handleViewArticle(s.id)}
+                        className="text-left text-sm font-medium text-blue-700 hover:underline"
+                      >
+                        {s.title}
+                      </button>
+                      <p className="text-xs text-zinc-500">{s.snippet}</p>
+                    </li>
+                  ))}
+                </ul>
+
+                {expandedArticle && (
+                  <div className="mt-3 rounded-md border border-zinc-200 bg-white p-4">
+                    <h3 className="text-sm font-semibold text-zinc-900">{expandedArticle.title}</h3>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-600">{expandedArticle.body}</p>
+                    <div className="mt-3 flex items-center gap-3 border-t border-zinc-100 pt-3">
+                      <span className="text-xs text-zinc-500">Was this helpful?</span>
+                      {feedbackGiven ? (
+                        <span className="text-xs text-green-700">Thanks for the feedback!</span>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleFeedback(true)}
+                            className="rounded-md border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100"
+                          >
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleFeedback(false)}
+                            className="rounded-md border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100"
+                          >
+                            No
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="sm:col-span-2">
               <label className="block text-sm font-medium text-zinc-700 mb-1">
                 Describe your issue

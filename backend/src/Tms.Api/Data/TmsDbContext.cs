@@ -31,6 +31,8 @@ public class TmsDbContext : DbContext
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<AutomationRule> AutomationRules => Set<AutomationRule>();
     public DbSet<AutomationRuleLog> AutomationRuleLogs => Set<AutomationRuleLog>();
+    public DbSet<KnowledgeArticle> KnowledgeArticles => Set<KnowledgeArticle>();
+    public DbSet<KnowledgeArticleVersion> KnowledgeArticleVersions => Set<KnowledgeArticleVersion>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -139,6 +141,20 @@ public class TmsDbContext : DbContext
             .HasIndex(l => new { l.TenantId, l.FiredAt });
         modelBuilder.Entity<AutomationRuleLog>()
             .HasQueryFilter(l => l.TenantId == _tenantContext.TenantId);
+
+        // Module 6 - Knowledge Base. Indexed for the portal-facing "public
+        // articles for this tenant" scan (the search/suggest endpoint loads
+        // all of these into memory - see KnowledgeSuggestionMatcher) and for
+        // the staff article list.
+        modelBuilder.Entity<KnowledgeArticle>()
+            .HasIndex(a => new { a.TenantId, a.IsPublic });
+        modelBuilder.Entity<KnowledgeArticle>()
+            .HasQueryFilter(a => a.TenantId == _tenantContext.TenantId);
+
+        modelBuilder.Entity<KnowledgeArticleVersion>()
+            .HasIndex(v => new { v.ArticleId, v.EditedAt });
+        modelBuilder.Entity<KnowledgeArticleVersion>()
+            .HasQueryFilter(v => v.TenantId == _tenantContext.TenantId);
 
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.
