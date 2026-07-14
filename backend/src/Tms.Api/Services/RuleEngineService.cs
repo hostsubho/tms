@@ -8,11 +8,13 @@ public class RuleEngineService : IRuleEngineService
 {
     private readonly TmsDbContext _db;
     private readonly INotificationService _notifications;
+    private readonly IAuditLogService _auditLog;
 
-    public RuleEngineService(TmsDbContext db, INotificationService notifications)
+    public RuleEngineService(TmsDbContext db, INotificationService notifications, IAuditLogService auditLog)
     {
         _db = db;
         _notifications = notifications;
+        _auditLog = auditLog;
     }
 
     public async Task RunTriggerAsync(Guid tenantId, AutomationTrigger trigger, Ticket ticket, CancellationToken ct)
@@ -45,6 +47,18 @@ public class RuleEngineService : IRuleEngineService
                 Summary = summary,
                 FiredAt = DateTime.UtcNow,
             });
+
+            // Module 5.4 - Audit Logging: the spec's own "done when" bar for
+            // this module is "a tenant admin can build a rule with no code
+            // and see it fire correctly in the audit log" - so a firing
+            // shows up here too, not just in AutomationRuleLogs (that log is
+            // scoped to the rule-builder UI's own "recent activity" list;
+            // this one is the tenant-wide compliance trail). Actor is a
+            // fixed system label since no human triggered this particular
+            // change - the ticket event that triggered the rule was already
+            // its own actor for its own audit entry.
+            _auditLog.Record(tenantId, actorUserId: null, actorLabel: "System (Automation)",
+                AuditAction.Updated, AuditEntityType.AutomationRule, rule.Id, summary);
         }
     }
 

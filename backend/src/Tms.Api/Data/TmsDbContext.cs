@@ -33,6 +33,7 @@ public class TmsDbContext : DbContext
     public DbSet<AutomationRuleLog> AutomationRuleLogs => Set<AutomationRuleLog>();
     public DbSet<KnowledgeArticle> KnowledgeArticles => Set<KnowledgeArticle>();
     public DbSet<KnowledgeArticleVersion> KnowledgeArticleVersions => Set<KnowledgeArticleVersion>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -155,6 +156,18 @@ public class TmsDbContext : DbContext
             .HasIndex(v => new { v.ArticleId, v.EditedAt });
         modelBuilder.Entity<KnowledgeArticleVersion>()
             .HasQueryFilter(v => v.TenantId == _tenantContext.TenantId);
+
+        // Module 5.4 - Security & Compliance / Audit Logging. Read back per
+        // tenant, newest first, same shape as AutomationRuleLog's index -
+        // this is the only access pattern AuditLogsController uses.
+        modelBuilder.Entity<AuditLog>()
+            .HasIndex(l => new { l.TenantId, l.Timestamp });
+        modelBuilder.Entity<AuditLog>()
+            .HasQueryFilter(l => l.TenantId == _tenantContext.TenantId);
+        modelBuilder.Entity<AuditLog>()
+            .Property(l => l.Action).HasConversion<string>();
+        modelBuilder.Entity<AuditLog>()
+            .Property(l => l.EntityType).HasConversion<string>();
 
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.

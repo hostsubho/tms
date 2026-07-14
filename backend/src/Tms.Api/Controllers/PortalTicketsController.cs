@@ -23,13 +23,15 @@ public class PortalTicketsController : ControllerBase
     private readonly ITenantContext _tenantContext;
     private readonly INotificationService _notifications;
     private readonly IRuleEngineService _ruleEngine;
+    private readonly IAuditLogService _auditLog;
 
-    public PortalTicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications, IRuleEngineService ruleEngine)
+    public PortalTicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications, IRuleEngineService ruleEngine, IAuditLogService auditLog)
     {
         _db = db;
         _tenantContext = tenantContext;
         _notifications = notifications;
         _ruleEngine = ruleEngine;
+        _auditLog = auditLog;
     }
 
     [HttpGet]
@@ -118,6 +120,14 @@ public class PortalTicketsController : ControllerBase
         SlaEvaluator.ApplyPolicyToNewTicket(ticket, matchedPolicy);
 
         _db.Tickets.Add(ticket);
+
+        // Actor is the customer, not a staff AppUser - GetUserId() would
+        // throw here (portal tokens carry "sub" as the customer's own id,
+        // not a NameIdentifier claim staff tokens use - see GetCustomerId's
+        // comment), so actorUserId is left null and the label makes clear
+        // this came from the portal, not internal staff.
+        _auditLog.Record(tenantId, actorUserId: null, $"Customer: {User.GetEmail()}", AuditAction.Created,
+            AuditEntityType.Ticket, ticket.Id, $"Created ticket '{ticket.Subject}' via customer portal.");
 
         // Module 5 - Workflow Automation: a portal-submitted ticket can be
         // auto-assigned/reprioritized by a TicketCreated rule exactly like a

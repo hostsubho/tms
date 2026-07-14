@@ -29,6 +29,7 @@ builder.Services.AddScoped<IPasswordHasher<PortalCustomer>, PasswordHasher<Porta
 builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IRuleEngineService, RuleEngineService>();
+builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 
 builder.Services.AddDbContext<TmsDbContext>(options =>
     options.UseNpgsql(connectionString));

@@ -3,7 +3,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Tms.Api.Data;
 using Tms.Api.Dtos.Sla;
+using Tms.Api.Extensions;
 using Tms.Api.Models;
+using Tms.Api.Services;
 
 namespace Tms.Api.Controllers;
 
@@ -18,11 +20,13 @@ public class SlaPoliciesController : ControllerBase
 {
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
+    private readonly IAuditLogService _auditLog;
 
-    public SlaPoliciesController(TmsDbContext db, ITenantContext tenantContext)
+    public SlaPoliciesController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog)
     {
         _db = db;
         _tenantContext = tenantContext;
+        _auditLog = auditLog;
     }
 
     [HttpGet]
@@ -57,6 +61,10 @@ public class SlaPoliciesController : ControllerBase
         };
 
         _db.SlaPolicies.Add(policy);
+
+        _auditLog.Record(tenantId, User.GetUserId(), User.GetEmail(), AuditAction.Created,
+            AuditEntityType.SlaPolicy, policy.Id, $"Created SLA policy '{policy.Name}'.");
+
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GetPolicies), SlaPolicyResponse.FromEntity(policy));
@@ -66,12 +74,18 @@ public class SlaPoliciesController : ControllerBase
     [Authorize(Roles = "Admin,Manager")]
     public async Task<ActionResult<SlaPolicyResponse>> UpdatePolicy(Guid id, [FromBody] UpdateSlaPolicyRequest request, CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+
         var policy = await _db.SlaPolicies.FirstOrDefaultAsync(p => p.Id == id, ct);
         if (policy is null) return NotFound();
 
         if (request.Name is not null) policy.Name = request.Name;
         if (request.ResponseTargetMinutes is not null) policy.ResponseTargetMinutes = request.ResponseTargetMinutes.Value;
         if (request.ResolutionTargetMinutes is not null) policy.ResolutionTargetMinutes = request.ResolutionTargetMinutes.Value;
+
+        _auditLog.Record(tenantId, User.GetUserId(), User.GetEmail(), AuditAction.Updated,
+            AuditEntityType.SlaPolicy, policy.Id, $"Updated SLA policy '{policy.Name}'.");
 
         await _db.SaveChangesAsync(ct);
         return Ok(SlaPolicyResponse.FromEntity(policy));
@@ -81,6 +95,9 @@ public class SlaPoliciesController : ControllerBase
     [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> DeletePolicy(Guid id, CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+
         var policy = await _db.SlaPolicies.FirstOrDefaultAsync(p => p.Id == id, ct);
         if (policy is null) return NotFound();
 
@@ -88,6 +105,10 @@ public class SlaPoliciesController : ControllerBase
         // dangling) and their already-computed due dates - deleting a policy
         // doesn't retroactively change commitments already made to existing tickets.
         _db.SlaPolicies.Remove(policy);
+
+        _auditLog.Record(tenantId, User.GetUserId(), User.GetEmail(), AuditAction.Deleted,
+            AuditEntityType.SlaPolicy, policy.Id, $"Deleted SLA policy '{policy.Name}'.");
+
         await _db.SaveChangesAsync(ct);
         return NoContent();
     }

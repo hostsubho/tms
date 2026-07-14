@@ -3,7 +3,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Tms.Api.Data;
 using Tms.Api.Dtos.Automation;
+using Tms.Api.Extensions;
 using Tms.Api.Models;
+using Tms.Api.Services;
 
 namespace Tms.Api.Controllers;
 
@@ -18,11 +20,13 @@ public class AutomationRulesController : ControllerBase
 {
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
+    private readonly IAuditLogService _auditLog;
 
-    public AutomationRulesController(TmsDbContext db, ITenantContext tenantContext)
+    public AutomationRulesController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog)
     {
         _db = db;
         _tenantContext = tenantContext;
+        _auditLog = auditLog;
     }
 
     [HttpGet]
@@ -54,6 +58,10 @@ public class AutomationRulesController : ControllerBase
         };
 
         _db.AutomationRules.Add(rule);
+
+        _auditLog.Record(tenantId, User.GetUserId(), User.GetEmail(), AuditAction.Created,
+            AuditEntityType.AutomationRule, rule.Id, $"Created automation rule '{rule.Name}'.");
+
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GetRules), AutomationRuleResponse.FromEntity(rule));
@@ -63,6 +71,9 @@ public class AutomationRulesController : ControllerBase
     [Authorize(Roles = "Admin,Manager")]
     public async Task<ActionResult<AutomationRuleResponse>> UpdateRule(Guid id, [FromBody] UpdateAutomationRuleRequest request, CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+
         var rule = await _db.AutomationRules.FirstOrDefaultAsync(r => r.Id == id, ct);
         if (rule is null) return NotFound();
 
@@ -73,6 +84,9 @@ public class AutomationRulesController : ControllerBase
         if (request.ActionType is not null) rule.ActionType = request.ActionType.Value;
         if (request.ActionValue is not null) rule.ActionValue = request.ActionValue;
 
+        _auditLog.Record(tenantId, User.GetUserId(), User.GetEmail(), AuditAction.Updated,
+            AuditEntityType.AutomationRule, rule.Id, $"Updated automation rule '{rule.Name}'.");
+
         await _db.SaveChangesAsync(ct);
         return Ok(AutomationRuleResponse.FromEntity(rule));
     }
@@ -81,6 +95,9 @@ public class AutomationRulesController : ControllerBase
     [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> DeleteRule(Guid id, CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+
         var rule = await _db.AutomationRules.FirstOrDefaultAsync(r => r.Id == id, ct);
         if (rule is null) return NotFound();
 
@@ -88,6 +105,10 @@ public class AutomationRulesController : ControllerBase
         // audit trail of what a rule did while it existed shouldn't
         // disappear just because the rule itself was later removed.
         _db.AutomationRules.Remove(rule);
+
+        _auditLog.Record(tenantId, User.GetUserId(), User.GetEmail(), AuditAction.Deleted,
+            AuditEntityType.AutomationRule, rule.Id, $"Deleted automation rule '{rule.Name}'.");
+
         await _db.SaveChangesAsync(ct);
         return NoContent();
     }

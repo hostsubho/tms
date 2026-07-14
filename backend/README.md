@@ -69,6 +69,9 @@ Module 5 (Workflow Automation & Business Rules) adds `AutomationRules` and `Auto
 Module 6 (Knowledge Base) adds `KnowledgeArticles` and `KnowledgeArticleVersions`:
 `dotnet ef migrations add AddKnowledgeBase --output-dir Migrations && dotnet ef database update`
 
+Module 5.4 (Audit Logging) adds `AuditLogs`:
+`dotnet ef migrations add AddAuditLogs --output-dir Migrations && dotnet ef database update`
+
 Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
 required FK and there's no admin UI for creating plans yet:
 `psql "<connection string>" -f docs/seed-plans.sql`
@@ -171,6 +174,13 @@ Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bea
 - `GET /?query=...` — keyword-ranked suggestions for a ticket subject (title matches weighted 3x over body matches); with no `query`, falls back to the tenant's most-viewed public articles. Powers the portal's "these articles might already answer your question" panel as a customer types a new ticket's subject.
 - `GET /{id}` — full article body; increments `ViewCount`.
 - `POST /{id}/feedback` — `{ helpful: bool }`; increments `HelpfulYesCount`/`HelpfulNoCount`.
+
+**Audit Logs** (`/api/audit-logs`) — Module 5.4 (Security & Compliance), requires the `TenantStaff` policy **and** `Admin`/`Manager` role
+- `GET /?entityType=&action=` — most recent 200 entries tenant-wide, newest first; both query params optional (`entityType` one of `Ticket`/`Category`/`SlaPolicy`/`AutomationRule`/`KnowledgeArticle`, `action` one of `Created`/`Updated`/`Deleted`). Read-only — there is no write endpoint anywhere; every row is a side effect of the action it describes, recorded by the other controllers below via `IAuditLogService.Record(...)` in the same DB transaction as the change itself (so an entry can never exist for a change that failed to save, and never be missing for one that succeeded).
+- Restricted to `Admin`/`Manager`, unlike most other staff `GET`s in this app (which are open to any `TenantStaff`-authenticated role) — an org-wide "who did what" compliance trail isn't something every agent needs visibility into.
+- Scoped down from the full spec (see `docs/tms_spec.md` section 5.4): this is the tenant-level audit trail only — a global, cross-tenant audit log of platform-level actions (tenant created/suspended, plan changed, impersonation) is a distinct Super Admin concern that needs the impersonation/plan-change features it would describe to exist first, and is left for a later pass.
+- Recorded today: ticket create/update (staff and portal-submitted), category create, SLA policy create/update/delete, automation rule create/update/delete, knowledge article create/update/delete, and every automation rule firing (actor `"System (Automation)"`, satisfying Module 5's own "done when" bar: "a tenant admin can build a rule with no code and see it fire correctly in the audit log"). Ticket comments and CSAT submissions are not recorded — kept out of scope to avoid a noisy, low-signal trail; the version history already covers article edits in more detail, and comment content isn't a compliance-relevant "what changed."
+- `ActorLabel` is a denormalized snapshot (an email, `"Customer: {email}"` for portal-submitted tickets, or `"System (Automation)"`) rather than a live join to `Users` — a row still reads sensibly even if the acting user is later deactivated or deleted.
 
 **Platform Auth** (`/api/platform/auth`) — Super Admin console (spec section 5, distinct from Module 5's workflow automation above)
 - `POST /bootstrap` — `{ name, email, password }`. Only works once, while `PlatformUsers` is empty; creates the first `Owner`. 409 after that.

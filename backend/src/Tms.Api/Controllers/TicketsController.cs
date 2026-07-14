@@ -18,13 +18,15 @@ public class TicketsController : ControllerBase
     private readonly ITenantContext _tenantContext;
     private readonly INotificationService _notifications;
     private readonly IRuleEngineService _ruleEngine;
+    private readonly IAuditLogService _auditLog;
 
-    public TicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications, IRuleEngineService ruleEngine)
+    public TicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications, IRuleEngineService ruleEngine, IAuditLogService auditLog)
     {
         _db = db;
         _tenantContext = tenantContext;
         _notifications = notifications;
         _ruleEngine = ruleEngine;
+        _auditLog = auditLog;
     }
 
     [HttpGet]
@@ -130,6 +132,9 @@ public class TicketsController : ControllerBase
 
         _db.Tickets.Add(ticket);
 
+        _auditLog.Record(tenantId, User.GetUserId(), User.GetEmail(), AuditAction.Created,
+            AuditEntityType.Ticket, ticket.Id, $"Created ticket '{ticket.Subject}'.");
+
         // Module 5 - Workflow Automation: runs before the notify-on-create
         // block below, so if a rule auto-assigns this ticket (or changes its
         // priority/status), the notification logic sees the *final* state -
@@ -179,6 +184,24 @@ public class TicketsController : ControllerBase
         if (request.Priority is not null) ticket.Priority = request.Priority.Value;
         if (request.CategoryId is not null) ticket.CategoryId = request.CategoryId;
         if (request.AssigneeId is not null) ticket.AssigneeId = request.AssigneeId;
+
+        // Built from exactly which fields this request touched, before the
+        // automation rule engine runs below - a rule-driven change to the
+        // same ticket gets its own separate audit entry (see
+        // RuleEngineService), so this one should only describe what the
+        // human caller of this PATCH actually asked for.
+        var changedFields = new List<string>();
+        if (request.Subject is not null) changedFields.Add("subject");
+        if (request.Description is not null) changedFields.Add("description");
+        if (request.Status is not null) changedFields.Add($"status → {ticket.Status}");
+        if (request.Priority is not null) changedFields.Add($"priority → {ticket.Priority}");
+        if (request.CategoryId is not null) changedFields.Add("category");
+        if (request.AssigneeId is not null) changedFields.Add("assignee");
+        if (changedFields.Count > 0)
+        {
+            _auditLog.Record(tenantId, User.GetUserId(), User.GetEmail(), AuditAction.Updated,
+                AuditEntityType.Ticket, ticket.Id, $"Updated ticket '{ticket.Subject}': {string.Join(", ", changedFields)}.");
+        }
 
         // Module 5 - Workflow Automation: runs after the request's own
         // field changes are applied (so conditions see the ticket's new

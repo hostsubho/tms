@@ -2,7 +2,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Tms.Api.Data;
+using Tms.Api.Extensions;
 using Tms.Api.Models;
+using Tms.Api.Services;
 
 namespace Tms.Api.Controllers;
 
@@ -15,11 +17,13 @@ public class CategoriesController : ControllerBase
 {
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
+    private readonly IAuditLogService _auditLog;
 
-    public CategoriesController(TmsDbContext db, ITenantContext tenantContext)
+    public CategoriesController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog)
     {
         _db = db;
         _tenantContext = tenantContext;
+        _auditLog = auditLog;
     }
 
     [HttpGet]
@@ -45,6 +49,10 @@ public class CategoriesController : ControllerBase
         };
 
         _db.Categories.Add(category);
+
+        _auditLog.Record(tenantId, User.GetUserId(), User.GetEmail(), AuditAction.Created,
+            AuditEntityType.Category, category.Id, $"Created category '{category.Name}'.");
+
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GetCategories), category);

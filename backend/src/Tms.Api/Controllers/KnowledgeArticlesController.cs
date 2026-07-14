@@ -5,6 +5,7 @@ using Tms.Api.Data;
 using Tms.Api.Dtos.Knowledge;
 using Tms.Api.Extensions;
 using Tms.Api.Models;
+using Tms.Api.Services;
 
 namespace Tms.Api.Controllers;
 
@@ -18,11 +19,13 @@ public class KnowledgeArticlesController : ControllerBase
 {
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
+    private readonly IAuditLogService _auditLog;
 
-    public KnowledgeArticlesController(TmsDbContext db, ITenantContext tenantContext)
+    public KnowledgeArticlesController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog)
     {
         _db = db;
         _tenantContext = tenantContext;
+        _auditLog = auditLog;
     }
 
     [HttpGet]
@@ -62,6 +65,10 @@ public class KnowledgeArticlesController : ControllerBase
         };
 
         _db.KnowledgeArticles.Add(article);
+
+        _auditLog.Record(tenantId, User.GetUserId(), User.GetEmail(), AuditAction.Created,
+            AuditEntityType.KnowledgeArticle, article.Id, $"Created knowledge article '{article.Title}'.");
+
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GetArticle), new { id = article.Id }, ArticleResponse.FromEntity(article));
@@ -100,6 +107,9 @@ public class KnowledgeArticlesController : ControllerBase
         if (request.CategoryId is not null) article.CategoryId = request.CategoryId;
         article.UpdatedAt = DateTime.UtcNow;
 
+        _auditLog.Record(tenantId, User.GetUserId(), User.GetEmail(), AuditAction.Updated,
+            AuditEntityType.KnowledgeArticle, article.Id, $"Updated knowledge article '{article.Title}'.");
+
         await _db.SaveChangesAsync(ct);
         return Ok(ArticleResponse.FromEntity(article));
     }
@@ -108,6 +118,9 @@ public class KnowledgeArticlesController : ControllerBase
     [Authorize(Roles = "Admin,Manager")]
     public async Task<IActionResult> DeleteArticle(Guid id, CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+
         var article = await _db.KnowledgeArticles.FirstOrDefaultAsync(a => a.Id == id, ct);
         if (article is null) return NotFound();
 
@@ -117,6 +130,10 @@ public class KnowledgeArticlesController : ControllerBase
         // history of what existed is a separate concern from whether the
         // article itself still does.
         _db.KnowledgeArticles.Remove(article);
+
+        _auditLog.Record(tenantId, User.GetUserId(), User.GetEmail(), AuditAction.Deleted,
+            AuditEntityType.KnowledgeArticle, article.Id, $"Deleted knowledge article '{article.Title}'.");
+
         await _db.SaveChangesAsync(ct);
         return NoContent();
     }
