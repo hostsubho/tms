@@ -118,6 +118,26 @@ public class SuperAdminTenantsController : ControllerBase
         if (tenant is null) return NotFound();
 
         tenant.CmdbEnabled = request.CmdbEnabled;
+
+        // Mirror the corresponding TenantModuleFlag row for Cmdb, same as
+        // UpdateModuleFlag mirrors this column in the other direction. This
+        // is the older Module 10 toggle (Tenants list page); the newer
+        // Module Licensing panel (Billing page) writes a TenantModuleFlag
+        // row directly. Without this, the two toggles would silently
+        // diverge - toggling this legacy switch would move CmdbEnabled but
+        // leave a stale TenantModuleFlag row behind, which IModuleAccessService
+        // trusts unconditionally once it exists, so Cmdb-gated endpoints
+        // (AssetsController etc.) would keep enforcing the old value while
+        // this page's checkbox showed the new one.
+        var flag = await _db.TenantModuleFlags.FirstOrDefaultAsync(f => f.TenantId == id && f.ModuleKey == ModuleKey.Cmdb, ct);
+        if (flag is null)
+        {
+            flag = new TenantModuleFlag { Id = Guid.NewGuid(), TenantId = id, ModuleKey = ModuleKey.Cmdb };
+            _db.TenantModuleFlags.Add(flag);
+        }
+        flag.Enabled = request.CmdbEnabled;
+        flag.UpdatedAt = DateTime.UtcNow;
+
         await _db.SaveChangesAsync(ct);
         return Ok(tenant);
     }
