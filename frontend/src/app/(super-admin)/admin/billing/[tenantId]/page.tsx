@@ -41,6 +41,39 @@ interface Plan {
   priceMonthly: number;
 }
 
+interface ModuleFlag {
+  moduleKey: string;
+  enabled: boolean;
+  monthlyCostCents: number | null;
+}
+
+interface ModuleLicensing {
+  modules: ModuleFlag[];
+  basePlanPriceMonthlyCents: number;
+  suggestedTotalCents: number;
+  totalOverrideCents: number | null;
+  effectiveTotalCents: number;
+}
+
+// "Module Licensing" - client customization & module cost negotiation.
+// Friendly labels for the fixed ModuleKey enum on the backend (see
+// Models/TenantModuleFlag.cs) - kept as a plain lookup, not fetched, since
+// the set of modules is small and fixed in code on both sides.
+const MODULE_LABELS: Record<string, string> = {
+  SlaPolicies: "SLA Policies",
+  Automation: "Automation Rules",
+  KnowledgeBase: "Knowledge Base",
+  AdvancedReports: "Advanced Reports & Analytics",
+  Cmdb: "Asset Management / CMDB",
+  IntegrationsApi: "Integrations & Public API",
+  CustomRoles: "Custom Roles / RBAC",
+  Sso: "SSO (SAML/OIDC)",
+};
+
+function centsToDollarsInput(cents: number | null): string {
+  return cents === null ? "" : (cents / 100).toString();
+}
+
 const STATUS_STYLES: Record<string, string> = {
   Trial: "bg-blue-100 text-blue-700",
   Active: "bg-green-100 text-green-700",
@@ -54,6 +87,11 @@ const STATUS_STYLES: Record<string, string> = {
 // PlatformBilling policy (Owner/PlatformAdmin/BillingAdmin), narrower than
 // PlatformAdmin's "any role" used for the read-only overview below.
 const BILLING_ROLES = new Set(["Owner", "PlatformAdmin", "BillingAdmin"]);
+
+// Enabling/disabling a module is a functionality decision for the client,
+// not purely billing - matches the backend's PlatformManage policy on
+// UpdateModuleFlag (narrower than PlatformBilling, excludes BillingAdmin).
+const MODULE_MANAGE_ROLES = new Set(["Owner", "PlatformAdmin"]);
 
 export default function TenantBillingPage() {
   const router = useRouter();
@@ -73,6 +111,12 @@ export default function TenantBillingPage() {
   const [overridePlanId, setOverridePlanId] = useState("");
   const [overriding, setOverriding] = useState(false);
 
+  const [licensing, setLicensing] = useState<ModuleLicensing | null>(null);
+  const [moduleCostInputs, setModuleCostInputs] = useState<Record<string, string>>({});
+  const [savingModule, setSavingModule] = useState<string | null>(null);
+  const [totalOverrideInput, setTotalOverrideInput] = useState("");
+  const [savingTotalOverride, setSavingTotalOverride] = useState(false);
+
   const load = useCallback(async (token: string) => {
     try {
       const overview = await apiFetch<Overview>(`/api/platform/billing/tenants/${tenantId}`, { token });
@@ -87,6 +131,19 @@ export default function TenantBillingPage() {
     }
   }, [router, tenantId]);
 
+  const loadLicensing = useCallback(async (token: string) => {
+    try {
+      const result = await apiFetch<ModuleLicensing>(`/api/platform/tenants/${tenantId}/module-flags`, { token });
+      setLicensing(result);
+      setModuleCostInputs(
+        Object.fromEntries(result.modules.map((m) => [m.moduleKey, centsToDollarsInput(m.monthlyCostCents)])),
+      );
+      setTotalOverrideInput(centsToDollarsInput(result.totalOverrideCents));
+    } catch {
+      // Non-fatal - the rest of the billing page still renders.
+    }
+  }, [tenantId]);
+
   useEffect(() => {
     const auth = platformAuth.get();
     if (!auth) {
@@ -95,6 +152,7 @@ export default function TenantBillingPage() {
     }
     setRole(auth.role);
     load(auth.accessToken);
+    loadLicensing(auth.accessToken);
 
     apiFetch<Plan[]>("/api/platform/plans", { token: auth.accessToken })
       .then((data) => {
@@ -104,9 +162,86 @@ export default function TenantBillingPage() {
       .catch(() => {
         // Non-fatal: the override dropdown just won't have options.
       });
-  }, [router, load]);
+  }, [router, load, loadLicensing]);
 
   const canManageBilling = role !== null && BILLING_ROLES.has(role);
+  const canManageModules = role !== null && MODULE_MANAGE_ROLES.has(role);
+
+  async function handleToggleModule(m: ModuleFlag) {
+    const auth = platformAuth.get();
+    if (!auth) return;
+
+    setActionError(null);
+    setSavingModule(m.moduleKey);
+    try {
+      const dollars = moduleCostInputs[m.moduleKey];
+      const monthlyCostCents = dollars === "" || dollars === undefined ? null : Math.round(Number(dollars) * 100);
+      await apiFetch(`/api/platform/tenants/${tenantId}/module-flags/${m.moduleKey}`, {
+        method: "PUT",
+        token: auth.accessToken,
+        body: JSON.stringify({ enabled: !m.enabled, monthlyCostCents }),
+      });
+      await loadLicensing(auth.accessToken);
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Couldn't update module.");
+    } finally {
+      setSavingModule(null);
+    }
+  }
+
+  async function handleSaveModuleCost(m: ModuleFlag) {
+    const auth = platformAuth.get();
+    if (!auth) return;
+
+    const dollars = moduleCostInputs[m.moduleKey];
+    if (dollars !== "" && (!Number.isFinite(Number(dollars)) || Number(dollars) < 0)) {
+      setActionError("Enter a non-negative dollar amount, or leave it blank to clear the price.");
+      return;
+    }
+
+    setActionError(null);
+    setSavingModule(m.moduleKey);
+    try {
+      const monthlyCostCents = dollars === "" ? null : Math.round(Number(dollars) * 100);
+      await apiFetch(`/api/platform/tenants/${tenantId}/module-flags/${m.moduleKey}`, {
+        method: "PUT",
+        token: auth.accessToken,
+        body: JSON.stringify({ enabled: m.enabled, monthlyCostCents }),
+      });
+      await loadLicensing(auth.accessToken);
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Couldn't update module price.");
+    } finally {
+      setSavingModule(null);
+    }
+  }
+
+  async function handleSaveTotalOverride(e: React.FormEvent) {
+    e.preventDefault();
+    const auth = platformAuth.get();
+    if (!auth) return;
+
+    if (totalOverrideInput !== "" && (!Number.isFinite(Number(totalOverrideInput)) || Number(totalOverrideInput) < 0)) {
+      setActionError("Enter a non-negative dollar amount for the negotiated total.");
+      return;
+    }
+
+    setActionError(null);
+    setSavingTotalOverride(true);
+    try {
+      const totalOverrideCents = totalOverrideInput === "" ? null : Math.round(Number(totalOverrideInput) * 100);
+      await apiFetch(`/api/platform/tenants/${tenantId}/billing-total-override`, {
+        method: "PUT",
+        token: auth.accessToken,
+        body: JSON.stringify({ totalOverrideCents }),
+      });
+      await loadLicensing(auth.accessToken);
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Couldn't update the negotiated total.");
+    } finally {
+      setSavingTotalOverride(false);
+    }
+  }
 
   async function handleApplyCredit(e: React.FormEvent) {
     e.preventDefault();
@@ -203,6 +338,121 @@ export default function TenantBillingPage() {
                 </p>
               )}
             </section>
+
+            {licensing && (
+              <section className="rounded-lg border border-zinc-800 bg-zinc-900 p-6">
+                <h2 className="mb-1 text-sm font-semibold">Module licensing</h2>
+                <p className="mb-4 text-xs text-zinc-500">
+                  Turn optional modules on or off for this client and negotiate a monthly price for each -
+                  running cost updates automatically as modules are enabled, and can be overridden below.
+                </p>
+
+                <table className="w-full text-sm">
+                  <thead className="text-left text-xs font-medium uppercase text-zinc-500">
+                    <tr>
+                      <th className="py-2">Module</th>
+                      <th className="py-2">Enabled</th>
+                      <th className="py-2">Price / mo</th>
+                      <th className="py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800">
+                    {licensing.modules.map((m) => (
+                      <tr key={m.moduleKey}>
+                        <td className="py-2 text-zinc-300">{MODULE_LABELS[m.moduleKey] ?? m.moduleKey}</td>
+                        <td className="py-2">
+                          <button
+                            disabled={!canManageModules || savingModule === m.moduleKey}
+                            onClick={() => handleToggleModule(m)}
+                            className={`rounded-full px-2.5 py-1 text-xs disabled:opacity-50 ${
+                              m.enabled ? "bg-green-900/50 text-green-400" : "bg-zinc-800 text-zinc-500"
+                            }`}
+                          >
+                            {m.enabled ? "On" : "Off"}
+                          </button>
+                        </td>
+                        <td className="py-2">
+                          <div className="flex items-center gap-1">
+                            <span className="text-zinc-500">$</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              placeholder="unpriced"
+                              disabled={!canManageModules}
+                              value={moduleCostInputs[m.moduleKey] ?? ""}
+                              onChange={(e) =>
+                                setModuleCostInputs((prev) => ({ ...prev, [m.moduleKey]: e.target.value }))
+                              }
+                              className="w-24 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm focus:border-zinc-500 focus:outline-none disabled:opacity-50"
+                            />
+                          </div>
+                        </td>
+                        <td className="py-2 text-right">
+                          {canManageModules && (
+                            <button
+                              disabled={savingModule === m.moduleKey}
+                              onClick={() => handleSaveModuleCost(m)}
+                              className="text-xs text-zinc-400 hover:underline disabled:opacity-50"
+                            >
+                              Save price
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div className="mt-6 grid grid-cols-1 gap-4 border-t border-zinc-800 pt-4 sm:grid-cols-2">
+                  <div className="space-y-1 text-sm">
+                    <p className="text-zinc-500">
+                      Base plan: <span className="text-zinc-300">${(licensing.basePlanPriceMonthlyCents / 100).toFixed(2)}/mo</span>
+                    </p>
+                    <p className="text-zinc-500">
+                      Suggested total (plan + enabled modules):{" "}
+                      <span className="text-zinc-300">${(licensing.suggestedTotalCents / 100).toFixed(2)}/mo</span>
+                    </p>
+                    <p className="font-medium text-zinc-100">
+                      Effective total: ${(licensing.effectiveTotalCents / 100).toFixed(2)}/mo
+                      {licensing.totalOverrideCents !== null && (
+                        <span className="ml-2 rounded-full bg-amber-900/50 px-2 py-0.5 text-xs text-amber-400">
+                          negotiated
+                        </span>
+                      )}
+                    </p>
+                  </div>
+
+                  {canManageBilling && (
+                    <form onSubmit={handleSaveTotalOverride} className="space-y-2">
+                      <label className="block text-xs text-zinc-500">
+                        Override the final total (leave blank to use the suggested total)
+                      </label>
+                      <div className="flex gap-2">
+                        <div className="flex flex-1 items-center gap-1 rounded-md border border-zinc-700 bg-zinc-950 px-2">
+                          <span className="text-zinc-500">$</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={totalOverrideInput}
+                            onChange={(e) => setTotalOverrideInput(e.target.value)}
+                            className="w-full bg-transparent px-1 py-1.5 text-sm focus:outline-none"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={savingTotalOverride}
+                          className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-zinc-900 hover:bg-zinc-200 disabled:opacity-50"
+                        >
+                          {savingTotalOverride ? "Saving…" : "Save"}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              </section>
+            )}
 
             {canManageBilling && (
               <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">

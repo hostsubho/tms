@@ -46,6 +46,7 @@ public class TmsDbContext : DbContext
     public DbSet<ImpersonationLog> ImpersonationLogs => Set<ImpersonationLog>();
     public DbSet<TenantSsoConfig> SsoConfigs => Set<TenantSsoConfig>();
     public DbSet<SsoLoginState> SsoLoginStates => Set<SsoLoginState>();
+    public DbSet<TenantModuleFlag> TenantModuleFlags => Set<TenantModuleFlag>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -104,6 +105,13 @@ public class TmsDbContext : DbContext
             .HasIndex(t => t.Subdomain).IsUnique();
         modelBuilder.Entity<Tenant>()
             .Property(t => t.Status).HasConversion<string>();
+        // Client customization - theming (see Tenant's own doc comments).
+        modelBuilder.Entity<Tenant>()
+            .Property(t => t.ThemeMode).HasConversion<string>();
+        modelBuilder.Entity<Tenant>()
+            .Property(t => t.BorderRadius).HasConversion<string>();
+        modelBuilder.Entity<Tenant>()
+            .Property(t => t.Density).HasConversion<string>();
 
         modelBuilder.Entity<PlatformUser>()
             .HasIndex(p => p.Email).IsUnique();
@@ -299,6 +307,13 @@ public class TmsDbContext : DbContext
             .HasQueryFilter(s => s.TenantId == _tenantContext.TenantId);
         modelBuilder.Entity<SsoLoginState>()
             .Property(s => s.Protocol).HasConversion<string>();
+
+        // "Module Licensing" - see TenantModuleFlag's own doc comment for why
+        // this has no HasQueryFilter (same as Tenant/PlatformUser).
+        modelBuilder.Entity<TenantModuleFlag>()
+            .HasIndex(f => new { f.TenantId, f.ModuleKey }).IsUnique();
+        modelBuilder.Entity<TenantModuleFlag>()
+            .Property(f => f.ModuleKey).HasConversion<string>();
 
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.

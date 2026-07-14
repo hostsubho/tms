@@ -30,9 +30,24 @@ interface AgentPerformanceEntry {
   agentId: string;
   agentEmail: string;
   assignedCount: number;
+  openCount: number;
   resolvedCount: number;
   breachedCount: number;
   avgResolutionHours: number | null;
+  avgFirstResponseHours: number | null;
+  slaCompliancePercentage: number;
+  avgCsatRating: number | null;
+}
+
+interface TeamPerformance {
+  activeAgentCount: number;
+  totalAssigned: number;
+  totalResolved: number;
+  totalBreached: number;
+  avgResolutionHours: number | null;
+  avgFirstResponseHours: number | null;
+  slaCompliancePercentage: number;
+  avgCsatRating: number | null;
 }
 
 interface DailyCsat {
@@ -51,6 +66,7 @@ interface Csat {
 interface Dashboard {
   ticketVolume: TicketVolume;
   slaCompliance: SlaCompliance;
+  teamPerformance: TeamPerformance;
   agentPerformance: AgentPerformanceEntry[];
   csat: Csat;
 }
@@ -132,42 +148,79 @@ export default function ReportsPage() {
             </section>
 
             <section className="rounded-lg border border-zinc-200 bg-white p-6">
-              <h2 className="mb-4 text-sm font-semibold text-zinc-900">Agent performance</h2>
+              <h2 className="mb-1 text-sm font-semibold text-zinc-900">Team performance</h2>
+              <p className="mb-4 text-xs text-zinc-500">{data.teamPerformance.activeAgentCount} active agents</p>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <StatCard label="Assigned" value={data.teamPerformance.totalAssigned} />
+                <StatCard label="Resolved" value={data.teamPerformance.totalResolved} />
+                <StatCard
+                  label="SLA compliance"
+                  value={`${data.teamPerformance.slaCompliancePercentage}%`}
+                  sub={`${data.teamPerformance.totalBreached} breached`}
+                />
+                <StatCard
+                  label="Avg first response"
+                  value={data.teamPerformance.avgFirstResponseHours !== null ? `${data.teamPerformance.avgFirstResponseHours}h` : "—"}
+                  sub={
+                    data.teamPerformance.avgResolutionHours !== null
+                      ? `${data.teamPerformance.avgResolutionHours}h avg resolution`
+                      : undefined
+                  }
+                />
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-zinc-200 bg-white p-6">
+              <h2 className="mb-4 text-sm font-semibold text-zinc-900">Employee performance</h2>
               {data.agentPerformance.length === 0 ? (
                 <p className="text-sm text-zinc-500">No agents yet.</p>
               ) : (
-                <table className="w-full text-sm">
-                  <thead className="text-left text-xs font-medium uppercase text-zinc-500">
-                    <tr>
-                      <th className="py-2">Agent</th>
-                      <th className="py-2">Assigned</th>
-                      <th className="py-2">Resolved</th>
-                      <th className="py-2">Breached</th>
-                      <th className="py-2">Avg resolution</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100">
-                    {data.agentPerformance.map((a) => (
-                      <tr key={a.agentId}>
-                        <td className="py-2 font-medium text-zinc-900">{a.agentEmail}</td>
-                        <td className="py-2 text-zinc-600">{a.assignedCount}</td>
-                        <td className="py-2 text-zinc-600">{a.resolvedCount}</td>
-                        <td className="py-2">
-                          {a.breachedCount > 0 ? (
-                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
-                              {a.breachedCount}
-                            </span>
-                          ) : (
-                            <span className="text-zinc-400">0</span>
-                          )}
-                        </td>
-                        <td className="py-2 text-zinc-600">
-                          {a.avgResolutionHours !== null ? `${a.avgResolutionHours}h` : "—"}
-                        </td>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-left text-xs font-medium uppercase text-zinc-500">
+                      <tr>
+                        <th className="py-2">Agent</th>
+                        <th className="py-2">Assigned</th>
+                        <th className="py-2">Open</th>
+                        <th className="py-2">Resolved</th>
+                        <th className="py-2">Breached</th>
+                        <th className="py-2">SLA %</th>
+                        <th className="py-2">Avg first response</th>
+                        <th className="py-2">Avg resolution</th>
+                        <th className="py-2">Avg CSAT</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-100">
+                      {data.agentPerformance.map((a) => (
+                        <tr key={a.agentId}>
+                          <td className="py-2 font-medium text-zinc-900 whitespace-nowrap">{a.agentEmail}</td>
+                          <td className="py-2 text-zinc-600">{a.assignedCount}</td>
+                          <td className="py-2 text-zinc-600">{a.openCount}</td>
+                          <td className="py-2 text-zinc-600">{a.resolvedCount}</td>
+                          <td className="py-2">
+                            {a.breachedCount > 0 ? (
+                              <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+                                {a.breachedCount}
+                              </span>
+                            ) : (
+                              <span className="text-zinc-400">0</span>
+                            )}
+                          </td>
+                          <td className="py-2 text-zinc-600">{a.slaCompliancePercentage}%</td>
+                          <td className="py-2 text-zinc-600">
+                            {a.avgFirstResponseHours !== null ? `${a.avgFirstResponseHours}h` : "—"}
+                          </td>
+                          <td className="py-2 text-zinc-600">
+                            {a.avgResolutionHours !== null ? `${a.avgResolutionHours}h` : "—"}
+                          </td>
+                          <td className="py-2 text-zinc-600">
+                            {a.avgCsatRating !== null ? `${a.avgCsatRating} / 5` : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </section>
 

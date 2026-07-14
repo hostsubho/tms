@@ -27,8 +27,35 @@ public record TenantSettingsResponse(
     // server-side by AssetsController) so the tenant dashboard can decide
     // whether to show the "Assets" nav link at all, rather than showing it
     // unconditionally and letting every non-CMDB tenant hit a 403.
-    bool CmdbEnabled);
+    bool CmdbEnabled,
+    // "Module Licensing" - every ModuleKey this tenant currently has
+    // enabled (see IModuleAccessService), so the dashboard nav can hide
+    // links for anything an Owner has switched off instead of showing them
+    // unconditionally and letting the request 403 (same reasoning as
+    // CmdbEnabled above, generalized to every optional module).
+    IReadOnlyList<string> EnabledModules,
+    // Client customization - theming (see Tenant's own doc comments).
+    string? SecondaryColor,
+    string? AccentColor,
+    string ThemeMode,
+    string BorderRadius,
+    string Density,
+    string? CustomCss);
 
 public record UpdateTenantSettingsRequest(string? Name, string? TimeZone, string? LogoUrl, string? PrimaryColor);
+
+// Client customization - theming. A separate request DTO from
+// UpdateTenantSettingsRequest (not folded into it) since this is a distinct
+// concern edited from its own settings page - keeps each request small and
+// avoids one giant "update everything about the tenant" endpoint. All
+// fields optional/omittable so the frontend can send just what changed.
+public record UpdateThemeRequest(
+    string? PrimaryColor,
+    string? SecondaryColor,
+    string? AccentColor,
+    string? ThemeMode,
+    string? BorderRadius,
+    string? Density,
+    string? CustomCss);
 
 public record ChangePlanRequest(Guid PlanId);

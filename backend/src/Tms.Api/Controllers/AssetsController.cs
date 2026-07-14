@@ -23,12 +23,14 @@ public class AssetsController : ControllerBase
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
     private readonly IAuditLogService _auditLog;
+    private readonly IModuleAccessService _moduleAccess;
 
-    public AssetsController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog)
+    public AssetsController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog, IModuleAccessService moduleAccess)
     {
         _db = db;
         _tenantContext = tenantContext;
         _auditLog = auditLog;
+        _moduleAccess = moduleAccess;
     }
 
     [HttpGet]
@@ -37,7 +39,7 @@ public class AssetsController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
-        if (!await IsCmdbEnabledAsync(tenantId, ct)) return CmdbDisabled();
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Cmdb, ct)) return CmdbDisabled();
 
         var query = _db.Assets.AsQueryable();
         if (type is not null) query = query.Where(a => a.Type == type);
@@ -52,7 +54,7 @@ public class AssetsController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
-        if (!await IsCmdbEnabledAsync(tenantId, ct)) return CmdbDisabled();
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Cmdb, ct)) return CmdbDisabled();
 
         var asset = await _db.Assets.FirstOrDefaultAsync(a => a.Id == id, ct);
         if (asset is null) return NotFound();
@@ -65,7 +67,7 @@ public class AssetsController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
-        if (!await IsCmdbEnabledAsync(tenantId, ct)) return CmdbDisabled();
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Cmdb, ct)) return CmdbDisabled();
 
         var utcNow = DateTime.UtcNow;
         var asset = new Asset
@@ -100,7 +102,7 @@ public class AssetsController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
-        if (!await IsCmdbEnabledAsync(tenantId, ct)) return CmdbDisabled();
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Cmdb, ct)) return CmdbDisabled();
 
         var asset = await _db.Assets.FirstOrDefaultAsync(a => a.Id == id, ct);
         if (asset is null) return NotFound();
@@ -129,7 +131,7 @@ public class AssetsController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
-        if (!await IsCmdbEnabledAsync(tenantId, ct)) return CmdbDisabled();
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Cmdb, ct)) return CmdbDisabled();
 
         var asset = await _db.Assets.FirstOrDefaultAsync(a => a.Id == id, ct);
         if (asset is null) return NotFound();
@@ -155,7 +157,7 @@ public class AssetsController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
-        if (!await IsCmdbEnabledAsync(tenantId, ct)) return CmdbDisabled();
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Cmdb, ct)) return CmdbDisabled();
 
         var assetExists = await _db.Assets.AnyAsync(a => a.Id == id, ct);
         if (!assetExists) return NotFound();
@@ -177,7 +179,7 @@ public class AssetsController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
-        if (!await IsCmdbEnabledAsync(tenantId, ct)) return CmdbDisabled();
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Cmdb, ct)) return CmdbDisabled();
 
         var asset = await _db.Assets.FirstOrDefaultAsync(a => a.Id == id, ct);
         if (asset is null) return NotFound(new { message = "Asset not found." });
@@ -221,7 +223,7 @@ public class AssetsController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
-        if (!await IsCmdbEnabledAsync(tenantId, ct)) return CmdbDisabled();
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Cmdb, ct)) return CmdbDisabled();
 
         var link = await _db.TicketAssets.FirstOrDefaultAsync(l => l.AssetId == id && l.TicketId == ticketId, ct);
         if (link is null) return NotFound();
@@ -229,14 +231,6 @@ public class AssetsController : ControllerBase
         _db.TicketAssets.Remove(link);
         await _db.SaveChangesAsync(ct);
         return NoContent();
-    }
-
-    private async Task<bool> IsCmdbEnabledAsync(Guid tenantId, CancellationToken ct)
-    {
-        // Tenants isn't query-filtered (see TmsDbContext), so this reads
-        // exactly the current tenant's own row - not a cross-tenant read.
-        var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct);
-        return tenant?.CmdbEnabled ?? false;
     }
 
     private ObjectResult CmdbDisabled() =>

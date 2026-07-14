@@ -28,17 +28,23 @@ public class CustomRolesController : ControllerBase
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
     private readonly IAuditLogService _auditLog;
+    private readonly IModuleAccessService _moduleAccess;
 
-    public CustomRolesController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog)
+    public CustomRolesController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog, IModuleAccessService moduleAccess)
     {
         _db = db;
         _tenantContext = tenantContext;
         _auditLog = auditLog;
+        _moduleAccess = moduleAccess;
     }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<CustomRoleResponse>>> GetRoles(CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.CustomRoles, ct)) return ModuleDisabled();
+
         var roles = await _db.CustomRoles.OrderBy(r => r.Name).ToListAsync(ct);
         if (roles.Count == 0) return Ok(Array.Empty<CustomRoleResponse>());
 
@@ -56,6 +62,7 @@ public class CustomRolesController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.CustomRoles, ct)) return ModuleDisabled();
 
         var role = new CustomRole
         {
@@ -96,6 +103,7 @@ public class CustomRolesController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.CustomRoles, ct)) return ModuleDisabled();
 
         var role = await _db.CustomRoles.FirstOrDefaultAsync(r => r.Id == id, ct);
         if (role is null) return NotFound();
@@ -144,6 +152,7 @@ public class CustomRolesController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.CustomRoles, ct)) return ModuleDisabled();
 
         var role = await _db.CustomRoles.FirstOrDefaultAsync(r => r.Id == id, ct);
         if (role is null) return NotFound();
@@ -171,4 +180,8 @@ public class CustomRolesController : ControllerBase
         await _db.SaveChangesAsync(ct);
         return NoContent();
     }
+
+    private ObjectResult ModuleDisabled() =>
+        StatusCode(StatusCodes.Status403Forbidden,
+            new { message = "Custom Roles isn't enabled for this workspace - contact WMX to turn it on." });
 }

@@ -31,6 +31,8 @@ builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IRuleEngineService, RuleEngineService>();
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
+// "Module Licensing" - see IModuleAccessService's own doc comment.
+builder.Services.AddScoped<IModuleAccessService, ModuleAccessService>();
 builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
 // Module 11 - Integrations & Public API. Typed HttpClient via

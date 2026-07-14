@@ -23,19 +23,22 @@ public class SsoAuthController : ControllerBase
     private readonly IJwtTokenService _tokenService;
     private readonly IOidcService _oidc;
     private readonly IConfiguration _config;
+    private readonly IModuleAccessService _moduleAccess;
 
     public SsoAuthController(
         TmsDbContext db,
         ITenantContext tenantContext,
         IJwtTokenService tokenService,
         IOidcService oidc,
-        IConfiguration config)
+        IConfiguration config,
+        IModuleAccessService moduleAccess)
     {
         _db = db;
         _tenantContext = tenantContext;
         _tokenService = tokenService;
         _oidc = oidc;
         _config = config;
+        _moduleAccess = moduleAccess;
     }
 
     [HttpGet("{tenantSlug}/start")]
@@ -55,6 +58,11 @@ public class SsoAuthController : ControllerBase
         // Resolve tenant context before querying SsoConfigs, same pre-auth
         // pattern AuthController.Login uses for Tenants/Users.
         _tenantContext.TenantId = tenant.Id;
+
+        if (!await _moduleAccess.IsEnabledAsync(tenant.Id, ModuleKey.Sso, ct))
+        {
+            return BadRequest(new { message = "SSO is not enabled for this workspace." });
+        }
 
         var config = await _db.SsoConfigs.FirstOrDefaultAsync(c => c.TenantId == tenant.Id, ct);
         if (config is null || !config.Enabled)
@@ -137,7 +145,8 @@ public class SsoAuthController : ControllerBase
         var config = await _db.SsoConfigs.FirstOrDefaultAsync(c => c.TenantId == loginState.TenantId, ct);
 
         if (tenant is null || config is null || !config.Enabled || config.Protocol != SsoProtocol.Oidc
-            || string.IsNullOrWhiteSpace(config.OidcAuthority) || string.IsNullOrWhiteSpace(config.OidcClientId) || string.IsNullOrWhiteSpace(config.OidcClientSecret))
+            || string.IsNullOrWhiteSpace(config.OidcAuthority) || string.IsNullOrWhiteSpace(config.OidcClientId) || string.IsNullOrWhiteSpace(config.OidcClientSecret)
+            || !await _moduleAccess.IsEnabledAsync(loginState.TenantId, ModuleKey.Sso, ct))
         {
             return RedirectToFrontendError("SSO is no longer available for this workspace.");
         }
@@ -195,7 +204,8 @@ public class SsoAuthController : ControllerBase
         var config = await _db.SsoConfigs.FirstOrDefaultAsync(c => c.TenantId == loginState.TenantId, ct);
 
         if (tenant is null || config is null || !config.Enabled || config.Protocol != SsoProtocol.Saml
-            || string.IsNullOrWhiteSpace(config.SamlIdpCertificate))
+            || string.IsNullOrWhiteSpace(config.SamlIdpCertificate)
+            || !await _moduleAccess.IsEnabledAsync(loginState.TenantId, ModuleKey.Sso, ct))
         {
             return RedirectToFrontendError("SSO is no longer available for this workspace.");
         }

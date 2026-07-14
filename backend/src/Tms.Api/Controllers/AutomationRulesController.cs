@@ -13,6 +13,11 @@ namespace Tms.Api.Controllers;
 // authenticated tenant staff member (agents should be able to see why a
 // ticket got auto-assigned/reprioritized); write is restricted to
 // Admin/Manager, same pattern as SlaPoliciesController/CategoriesController.
+// Gated behind the Automation module flag ("Module Licensing" - see
+// IModuleAccessService); rules that already exist keep firing via
+// RuleEngineService even while this controller is gated off - disabling the
+// module hides the management surface, it doesn't retroactively deactivate
+// rules a tenant already configured.
 [ApiController]
 [Route("api/automation-rules")]
 [Authorize(Policy = "TenantStaff")]
@@ -21,17 +26,23 @@ public class AutomationRulesController : ControllerBase
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
     private readonly IAuditLogService _auditLog;
+    private readonly IModuleAccessService _moduleAccess;
 
-    public AutomationRulesController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog)
+    public AutomationRulesController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog, IModuleAccessService moduleAccess)
     {
         _db = db;
         _tenantContext = tenantContext;
         _auditLog = auditLog;
+        _moduleAccess = moduleAccess;
     }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<AutomationRuleResponse>>> GetRules(CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Automation, ct)) return ModuleDisabled();
+
         var rules = await _db.AutomationRules.OrderBy(r => r.CreatedAt).ToListAsync(ct);
         return Ok(rules.Select(AutomationRuleResponse.FromEntity));
     }
@@ -42,6 +53,7 @@ public class AutomationRulesController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Automation, ct)) return ModuleDisabled();
 
         var rule = new AutomationRule
         {
@@ -73,6 +85,7 @@ public class AutomationRulesController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Automation, ct)) return ModuleDisabled();
 
         var rule = await _db.AutomationRules.FirstOrDefaultAsync(r => r.Id == id, ct);
         if (rule is null) return NotFound();
@@ -97,6 +110,7 @@ public class AutomationRulesController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Automation, ct)) return ModuleDisabled();
 
         var rule = await _db.AutomationRules.FirstOrDefaultAsync(r => r.Id == id, ct);
         if (rule is null) return NotFound();
@@ -116,6 +130,10 @@ public class AutomationRulesController : ControllerBase
     [HttpGet("logs")]
     public async Task<ActionResult<IEnumerable<AutomationRuleLogResponse>>> GetLogs(CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Automation, ct)) return ModuleDisabled();
+
         var logs = await _db.AutomationRuleLogs
             .OrderByDescending(l => l.FiredAt)
             .Take(100)
@@ -144,4 +162,8 @@ public class AutomationRulesController : ControllerBase
             l.Summary,
             l.FiredAt)));
     }
+
+    private ObjectResult ModuleDisabled() =>
+        StatusCode(StatusCodes.Status403Forbidden,
+            new { message = "Automation isn't enabled for this workspace - contact WMX to turn it on." });
 }

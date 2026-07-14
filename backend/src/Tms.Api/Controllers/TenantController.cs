@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Tms.Api.Data;
 using Tms.Api.Dtos.Onboarding;
+using Tms.Api.Models;
 using Tms.Api.Services;
 
 namespace Tms.Api.Controllers;
@@ -20,19 +21,21 @@ public class TenantController : ControllerBase
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
     private readonly IStripeService _stripe;
+    private readonly IModuleAccessService _moduleAccess;
 
-    public TenantController(TmsDbContext db, ITenantContext tenantContext, IStripeService stripe)
+    public TenantController(TmsDbContext db, ITenantContext tenantContext, IStripeService stripe, IModuleAccessService moduleAccess)
     {
         _db = db;
         _tenantContext = tenantContext;
         _stripe = stripe;
+        _moduleAccess = moduleAccess;
     }
 
     [HttpGet("me")]
     public async Task<ActionResult<TenantSettingsResponse>> GetMyTenant(CancellationToken ct)
     {
         var tenant = await GetOwnTenantAsync(ct);
-        return tenant is null ? NotFound() : Ok(ToResponse(tenant));
+        return tenant is null ? NotFound() : Ok(await ToResponseAsync(tenant, ct));
     }
 
     [HttpPatch("me")]
@@ -48,7 +51,64 @@ public class TenantController : ControllerBase
         if (request.PrimaryColor is not null) tenant.PrimaryColor = request.PrimaryColor;
 
         await _db.SaveChangesAsync(ct);
-        return Ok(ToResponse(tenant));
+        return Ok(await ToResponseAsync(tenant, ct));
+    }
+
+    // Client customization - theming. Separate endpoint/DTO from
+    // UpdateMyTenant above (see UpdateThemeRequest's own doc comment).
+    // Admin-only, same as every other tenant-settings mutation here - a
+    // Manager/Agent shouldn't be able to change branding every user sees.
+    [HttpPatch("me/theme")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<TenantSettingsResponse>> UpdateTheme([FromBody] UpdateThemeRequest request, CancellationToken ct)
+    {
+        var tenant = await GetOwnTenantAsync(ct);
+        if (tenant is null) return NotFound();
+
+        // Colors/CSS are free-form strings (any valid CSS color function,
+        // not just hex) - validated loosely (length caps only) rather than
+        // parsed, since rejecting a technically-valid-but-unusual CSS color
+        // value would be more annoying than helpful for what's ultimately
+        // just cosmetic per-tenant styling.
+        if (request.CustomCss is not null && request.CustomCss.Length > 20_000)
+        {
+            return BadRequest(new { message = "customCss is too long (20,000 character limit)." });
+        }
+
+        if (request.PrimaryColor is not null) tenant.PrimaryColor = request.PrimaryColor;
+        if (request.SecondaryColor is not null) tenant.SecondaryColor = request.SecondaryColor;
+        if (request.AccentColor is not null) tenant.AccentColor = request.AccentColor;
+        if (request.CustomCss is not null) tenant.CustomCss = request.CustomCss;
+
+        if (request.ThemeMode is not null)
+        {
+            if (!Enum.TryParse<ThemeMode>(request.ThemeMode, ignoreCase: true, out var themeMode))
+            {
+                return BadRequest(new { message = $"Unknown themeMode '{request.ThemeMode}'. Must be 'Light', 'Dark', or 'Auto'." });
+            }
+            tenant.ThemeMode = themeMode;
+        }
+
+        if (request.BorderRadius is not null)
+        {
+            if (!Enum.TryParse<ThemeBorderRadius>(request.BorderRadius, ignoreCase: true, out var borderRadius))
+            {
+                return BadRequest(new { message = $"Unknown borderRadius '{request.BorderRadius}'. Must be 'None', 'Small', 'Medium', or 'Large'." });
+            }
+            tenant.BorderRadius = borderRadius;
+        }
+
+        if (request.Density is not null)
+        {
+            if (!Enum.TryParse<ThemeDensity>(request.Density, ignoreCase: true, out var density))
+            {
+                return BadRequest(new { message = $"Unknown density '{request.Density}'. Must be 'Compact', 'Comfortable', or 'Spacious'." });
+            }
+            tenant.Density = density;
+        }
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(await ToResponseAsync(tenant, ct));
     }
 
     // Module 5.2 - Plans & Billing Administration changed the contract here:
@@ -95,7 +155,7 @@ public class TenantController : ControllerBase
 
         tenant.PlanId = request.PlanId;
         await _db.SaveChangesAsync(ct);
-        return Ok(ToResponse(tenant));
+        return Ok(await ToResponseAsync(tenant, ct));
     }
 
     private async Task<Models.Tenant?> GetOwnTenantAsync(CancellationToken ct)
@@ -108,7 +168,26 @@ public class TenantController : ControllerBase
         return await _db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct);
     }
 
-    private static TenantSettingsResponse ToResponse(Models.Tenant t) => new(
-        t.Id, t.Name, t.Subdomain, t.TimeZone, t.LogoUrl, t.PrimaryColor,
-        t.PlanId, t.Status.ToString(), t.TrialEndsAt, t.CmdbEnabled);
+    private async Task<TenantSettingsResponse> ToResponseAsync(Models.Tenant t, CancellationToken ct)
+    {
+        // "Module Licensing" - every module this tenant currently has
+        // enabled, using the exact same fallback logic every gated
+        // controller uses (IModuleAccessService), so this list can never
+        // drift from what a request against this tenant would actually be
+        // allowed to do.
+        var enabledModules = new List<string>();
+        foreach (var key in Enum.GetValues<ModuleKey>())
+        {
+            if (await _moduleAccess.IsEnabledAsync(t.Id, key, ct))
+            {
+                enabledModules.Add(key.ToString());
+            }
+        }
+
+        return new TenantSettingsResponse(
+            t.Id, t.Name, t.Subdomain, t.TimeZone, t.LogoUrl, t.PrimaryColor,
+            t.PlanId, t.Status.ToString(), t.TrialEndsAt, t.CmdbEnabled,
+            enabledModules,
+            t.SecondaryColor, t.AccentColor, t.ThemeMode.ToString(), t.BorderRadius.ToString(), t.Density.ToString(), t.CustomCss);
+    }
 }

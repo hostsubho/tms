@@ -20,17 +20,23 @@ public class KnowledgeArticlesController : ControllerBase
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
     private readonly IAuditLogService _auditLog;
+    private readonly IModuleAccessService _moduleAccess;
 
-    public KnowledgeArticlesController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog)
+    public KnowledgeArticlesController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog, IModuleAccessService moduleAccess)
     {
         _db = db;
         _tenantContext = tenantContext;
         _auditLog = auditLog;
+        _moduleAccess = moduleAccess;
     }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<ArticleResponse>>> GetArticles(CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.KnowledgeBase, ct)) return ModuleDisabled();
+
         var articles = await _db.KnowledgeArticles.OrderByDescending(a => a.UpdatedAt).ToListAsync(ct);
         return Ok(articles.Select(ArticleResponse.FromEntity));
     }
@@ -38,6 +44,10 @@ public class KnowledgeArticlesController : ControllerBase
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<ArticleResponse>> GetArticle(Guid id, CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.KnowledgeBase, ct)) return ModuleDisabled();
+
         var article = await _db.KnowledgeArticles.FirstOrDefaultAsync(a => a.Id == id, ct);
         if (article is null) return NotFound();
         return Ok(ArticleResponse.FromEntity(article));
@@ -49,6 +59,7 @@ public class KnowledgeArticlesController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.KnowledgeBase, ct)) return ModuleDisabled();
 
         var utcNow = DateTime.UtcNow;
         var article = new KnowledgeArticle
@@ -80,6 +91,7 @@ public class KnowledgeArticlesController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.KnowledgeBase, ct)) return ModuleDisabled();
 
         var article = await _db.KnowledgeArticles.FirstOrDefaultAsync(a => a.Id == id, ct);
         if (article is null) return NotFound();
@@ -120,6 +132,7 @@ public class KnowledgeArticlesController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.KnowledgeBase, ct)) return ModuleDisabled();
 
         var article = await _db.KnowledgeArticles.FirstOrDefaultAsync(a => a.Id == id, ct);
         if (article is null) return NotFound();
@@ -141,6 +154,10 @@ public class KnowledgeArticlesController : ControllerBase
     [HttpGet("{id:guid}/versions")]
     public async Task<ActionResult<IEnumerable<ArticleVersionResponse>>> GetVersions(Guid id, CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.KnowledgeBase, ct)) return ModuleDisabled();
+
         var versions = await _db.KnowledgeArticleVersions
             .Where(v => v.ArticleId == id)
             .OrderByDescending(v => v.EditedAt)
@@ -148,4 +165,8 @@ public class KnowledgeArticlesController : ControllerBase
 
         return Ok(versions.Select(ArticleVersionResponse.FromEntity));
     }
+
+    private ObjectResult ModuleDisabled() =>
+        StatusCode(StatusCodes.Status403Forbidden,
+            new { message = "Knowledge Base isn't enabled for this workspace - contact WMX to turn it on." });
 }

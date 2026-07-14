@@ -12,6 +12,9 @@ namespace Tms.Api.Controllers;
 // Module 11 - Integrations & Public API. Admin-only, same reasoning as
 // ApiKeysController - a webhook subscription is itself a standing form of
 // automatic outbound data egress, sensitive enough to gate the same way.
+// Gated behind the IntegrationsApi module flag ("Module Licensing" - see
+// IModuleAccessService), shared with ApiKeysController since both live under
+// the same "Integrations" nav entry/tenant-facing feature area.
 [ApiController]
 [Route("api/webhooks")]
 [Authorize(Policy = "TenantStaff")]
@@ -21,17 +24,23 @@ public class WebhooksController : ControllerBase
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
     private readonly IAuditLogService _auditLog;
+    private readonly IModuleAccessService _moduleAccess;
 
-    public WebhooksController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog)
+    public WebhooksController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog, IModuleAccessService moduleAccess)
     {
         _db = db;
         _tenantContext = tenantContext;
         _auditLog = auditLog;
+        _moduleAccess = moduleAccess;
     }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<WebhookResponse>>> GetWebhooks(CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.IntegrationsApi, ct)) return ModuleDisabled();
+
         var webhooks = await _db.WebhookSubscriptions.OrderByDescending(w => w.CreatedAt).ToListAsync(ct);
         return Ok(webhooks.Select(WebhookResponse.FromEntity));
     }
@@ -41,6 +50,7 @@ public class WebhooksController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.IntegrationsApi, ct)) return ModuleDisabled();
 
         var validationError = await WebhookUrlValidator.ValidateAsync(request.Url);
         if (validationError is not null)
@@ -82,6 +92,7 @@ public class WebhooksController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.IntegrationsApi, ct)) return ModuleDisabled();
 
         var webhook = await _db.WebhookSubscriptions.FirstOrDefaultAsync(w => w.Id == id, ct);
         if (webhook is null) return NotFound();
@@ -105,6 +116,7 @@ public class WebhooksController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.IntegrationsApi, ct)) return ModuleDisabled();
 
         var webhook = await _db.WebhookSubscriptions.FirstOrDefaultAsync(w => w.Id == id, ct);
         if (webhook is null) return NotFound();
@@ -124,6 +136,10 @@ public class WebhooksController : ControllerBase
     [HttpGet("{id:guid}/logs")]
     public async Task<ActionResult<IEnumerable<WebhookDeliveryLogResponse>>> GetLogs(Guid id, CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.IntegrationsApi, ct)) return ModuleDisabled();
+
         var logs = await _db.WebhookDeliveryLogs
             .Where(l => l.WebhookSubscriptionId == id)
             .OrderByDescending(l => l.AttemptedAt)
@@ -132,4 +148,8 @@ public class WebhooksController : ControllerBase
 
         return Ok(logs.Select(WebhookDeliveryLogResponse.FromEntity));
     }
+
+    private ObjectResult ModuleDisabled() =>
+        StatusCode(StatusCodes.Status403Forbidden,
+            new { message = "Integrations & API isn't enabled for this workspace - contact WMX to turn it on." });
 }

@@ -216,6 +216,128 @@ public class SuperAdminTenantsController : ControllerBase
             permissions.Select(p => p.ToString()).ToList()));
     }
 
+    // "Module Licensing" - client customization & module cost negotiation.
+    // Read is open to any platform role (PlatformAdmin, class-level policy);
+    // GET always returns every ModuleKey, synthesizing a default row
+    // (Enabled, no explicit price) for any module the Owner hasn't touched
+    // yet - same "stable shape even with nothing stored" convention
+    // SsoConfigController.GetConfig uses.
+    [HttpGet("{id:guid}/module-flags")]
+    public async Task<ActionResult<TenantModuleLicensingResponse>> GetModuleLicensing(Guid id, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == id, ct);
+        if (tenant is null) return NotFound();
+
+        var plan = await _db.Plans.FirstOrDefaultAsync(p => p.Id == tenant.PlanId, ct);
+        var basePlanCents = (long)Math.Round((plan?.PriceMonthly ?? 0m) * 100m);
+
+        var existingFlags = await _db.TenantModuleFlags.Where(f => f.TenantId == id).ToListAsync(ct);
+        var flagsByKey = existingFlags.ToDictionary(f => f.ModuleKey);
+
+        var modules = new List<ModuleFlagResponse>();
+        long suggestedModulesCents = 0;
+        foreach (var key in Enum.GetValues<ModuleKey>())
+        {
+            if (flagsByKey.TryGetValue(key, out var flag))
+            {
+                modules.Add(new ModuleFlagResponse(key.ToString(), flag.Enabled, flag.MonthlyCostCents));
+                if (flag.Enabled) suggestedModulesCents += flag.MonthlyCostCents ?? 0;
+            }
+            else
+            {
+                // Same default-enabled-except-Cmdb fallback as
+                // IModuleAccessService - kept in sync deliberately so this
+                // read-only view always matches what IsEnabledAsync would
+                // actually decide for a request against this tenant.
+                var defaultEnabled = key != ModuleKey.Cmdb || tenant.CmdbEnabled;
+                modules.Add(new ModuleFlagResponse(key.ToString(), defaultEnabled, null));
+            }
+        }
+
+        var suggestedTotal = basePlanCents + suggestedModulesCents;
+        var effectiveTotal = tenant.ModuleBillingTotalOverrideCents ?? suggestedTotal;
+
+        return Ok(new TenantModuleLicensingResponse(
+            modules, basePlanCents, suggestedTotal, tenant.ModuleBillingTotalOverrideCents, effectiveTotal));
+    }
+
+    // Owner/PlatformAdmin only (PlatformManage) - turning a module on or off
+    // is a functionality decision for the client, not purely a billing one,
+    // so this is gated the same as the legacy CmdbEnabled toggle above
+    // rather than the narrower PlatformBilling policy used for the
+    // total-override endpoint below. Setting a price alongside Enabled in
+    // the same call is still allowed here (an Owner does both in one motion
+    // when onboarding a module for a client) - BillingAdmin just can't flip
+    // Enabled unilaterally.
+    [HttpPut("{id:guid}/module-flags/{moduleKey}")]
+    [Authorize(Policy = "PlatformManage")]
+    public async Task<ActionResult<ModuleFlagResponse>> UpdateModuleFlag(
+        Guid id, ModuleKey moduleKey, [FromBody] UpdateModuleFlagRequest request, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == id, ct);
+        if (tenant is null) return NotFound();
+
+        if (request.MonthlyCostCents is < 0)
+        {
+            return BadRequest(new { message = "monthlyCostCents cannot be negative." });
+        }
+
+        var flag = await _db.TenantModuleFlags.FirstOrDefaultAsync(f => f.TenantId == id && f.ModuleKey == moduleKey, ct);
+        if (flag is null)
+        {
+            flag = new TenantModuleFlag { Id = Guid.NewGuid(), TenantId = id, ModuleKey = moduleKey };
+            _db.TenantModuleFlags.Add(flag);
+        }
+
+        flag.Enabled = request.Enabled;
+        flag.MonthlyCostCents = request.MonthlyCostCents;
+        flag.UpdatedAt = DateTime.UtcNow;
+
+        // Keep the legacy Tenant.CmdbEnabled column mirrored for Cmdb
+        // specifically - see TenantModuleFlag's own doc comment for why
+        // (the older Module 10 toggle/UI, and IModuleAccessService's
+        // fallback for tenants with no row yet, both still read this).
+        if (moduleKey == ModuleKey.Cmdb)
+        {
+            tenant.CmdbEnabled = request.Enabled;
+        }
+
+        var priceNote = request.MonthlyCostCents is not null ? $", priced at ${request.MonthlyCostCents / 100m:F2}/mo" : "";
+        _auditLog.Record(id, actorUserId: null, $"Super Admin: {User.GetEmail()}", AuditAction.Updated,
+            AuditEntityType.Billing, flag.Id, $"{(request.Enabled ? "Enabled" : "Disabled")} module '{moduleKey}'{priceNote}.");
+
+        await _db.SaveChangesAsync(ct);
+        return Ok(new ModuleFlagResponse(moduleKey.ToString(), flag.Enabled, flag.MonthlyCostCents));
+    }
+
+    // PlatformBilling (Owner/PlatformAdmin/BillingAdmin) - purely a
+    // negotiated-price lever, doesn't touch what the tenant can actually do,
+    // so it's scoped the same as ApplyCredit/OverridePlan on
+    // PlatformBillingController rather than the stricter PlatformManage used
+    // for the module toggle above.
+    [HttpPut("{id:guid}/billing-total-override")]
+    [Authorize(Policy = "PlatformBilling")]
+    public async Task<IActionResult> UpdateBillingTotalOverride(Guid id, [FromBody] UpdateBillingTotalOverrideRequest request, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == id, ct);
+        if (tenant is null) return NotFound();
+
+        if (request.TotalOverrideCents is < 0)
+        {
+            return BadRequest(new { message = "totalOverrideCents cannot be negative." });
+        }
+
+        tenant.ModuleBillingTotalOverrideCents = request.TotalOverrideCents;
+
+        _auditLog.Record(id, actorUserId: null, $"Super Admin: {User.GetEmail()}", AuditAction.Updated,
+            AuditEntityType.Billing, id, request.TotalOverrideCents is null
+                ? "Cleared the negotiated billing total override - back to the computed suggested total."
+                : $"Set a negotiated billing total override of ${request.TotalOverrideCents / 100m:F2}/mo.");
+
+        await _db.SaveChangesAsync(ct);
+        return NoContent();
+    }
+
     // Absolute route (leading "/") rather than nesting under this
     // controller's "api/platform/tenants" prefix - this isn't scoped to one
     // tenant, it's the platform-wide "who impersonated whom, when" list.

@@ -23,17 +23,20 @@ public class SsoConfigController : ControllerBase
     private readonly ITenantContext _tenantContext;
     private readonly IAuditLogService _auditLog;
     private readonly IConfiguration _config;
+    private readonly IModuleAccessService _moduleAccess;
 
     public SsoConfigController(
         TmsDbContext db,
         ITenantContext tenantContext,
         IAuditLogService auditLog,
-        IConfiguration config)
+        IConfiguration config,
+        IModuleAccessService moduleAccess)
     {
         _db = db;
         _tenantContext = tenantContext;
         _auditLog = auditLog;
         _config = config;
+        _moduleAccess = moduleAccess;
     }
 
     [HttpGet]
@@ -41,6 +44,7 @@ public class SsoConfigController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Sso, ct)) return ModuleDisabled();
 
         var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct);
         if (tenant is null) return NotFound();
@@ -76,6 +80,7 @@ public class SsoConfigController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.Sso, ct)) return ModuleDisabled();
 
         var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct);
         if (tenant is null) return NotFound();
@@ -159,4 +164,8 @@ public class SsoConfigController : ControllerBase
     private string BuildOidcRedirectUri() => $"{BackendBaseUrl}/api/auth/sso/oidc/callback";
     private string BuildSamlAcsUrl() => $"{BackendBaseUrl}/api/auth/sso/saml/acs";
     private static string BuildSpEntityId(string tenantSubdomain) => $"urn:tms:{tenantSubdomain}";
+
+    private ObjectResult ModuleDisabled() =>
+        StatusCode(StatusCodes.Status403Forbidden,
+            new { message = "SSO isn't enabled for this workspace - contact WMX to turn it on." });
 }

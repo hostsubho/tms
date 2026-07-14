@@ -2,6 +2,20 @@ namespace Tms.Api.Models;
 
 public enum TenantStatus { Trial, Active, PastDue, Suspended, Churned }
 
+// Client customization - theming. Light/Dark mirror the two color schemes
+// most browsers/OSes already expose a preference for; Auto follows that
+// system preference client-side rather than forcing one.
+public enum ThemeMode { Light, Dark, Auto }
+
+// A named scale (not a raw px value) so the picker stays a small, safe set
+// of options rather than free-form input that could break layout math.
+public enum ThemeBorderRadius { None, Small, Medium, Large }
+
+// Controls spacing/line-height across the dashboard shell - Compact suits
+// power users triaging a high ticket volume, Spacious suits a more relaxed,
+// presentation-style use.
+public enum ThemeDensity { Compact, Comfortable, Spacious }
+
 public class Tenant
 {
     public Guid Id { get; set; }
@@ -52,4 +66,32 @@ public class Tenant
     // AssetsController on every request (not by a Plan check - the whole
     // point is this is independent of what plan the tenant is on).
     public bool CmdbEnabled { get; set; }
+
+    // "Module Licensing" - client customization & module cost negotiation.
+    // Null means "use the computed suggested total" (base Plan.PriceMonthly
+    // plus every enabled TenantModuleFlag's MonthlyCostCents) - set means an
+    // Owner/BillingAdmin has negotiated a different final number for this
+    // specific client (see SuperAdminTenantsController.UpdateBillingTotalOverride).
+    // Deliberately independent of the per-module MonthlyCostCents overrides
+    // on TenantModuleFlag itself - an Owner can override the grand total, the
+    // per-module price, or both at once; neither is derived from the other.
+    public long? ModuleBillingTotalOverrideCents { get; set; }
+
+    // Client customization - theming, extending the Module 2 setup-wizard
+    // fields (LogoUrl/PrimaryColor) above with a fuller theme editor.
+    // Defaults match what every tenant already effectively looks like today
+    // (light, medium rounding, comfortable spacing, no extra colors/CSS) so
+    // this migration needs no data backfill.
+    public string? SecondaryColor { get; set; }
+    public string? AccentColor { get; set; }
+    public ThemeMode ThemeMode { get; set; } = ThemeMode.Light;
+    public ThemeBorderRadius BorderRadius { get; set; } = ThemeBorderRadius.Medium;
+    public ThemeDensity Density { get; set; } = ThemeDensity.Comfortable;
+
+    // Raw CSS injected into the tenant's own dashboard shell only (never the
+    // Super Admin console or another tenant's dashboard) - size-capped at the
+    // API layer (see TenantController.UpdateTheme), not here, since EF Core
+    // property attributes don't enforce string length against Postgres
+    // `text` columns the way a `varchar(n)` would.
+    public string? CustomCss { get; set; }
 }

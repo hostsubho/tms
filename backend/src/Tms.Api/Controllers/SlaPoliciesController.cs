@@ -12,7 +12,10 @@ namespace Tms.Api.Controllers;
 // Module 4 - SLA Management. Policies are matched to tickets by priority at
 // creation time (see SlaEvaluator + TicketsController). Read is open to any
 // authenticated tenant user (agents need to see what SLA a ticket is under);
-// write is restricted to Admin/Manager, same as Categories.
+// write is restricted to Admin/Manager, same as Categories. Gated behind the
+// SlaPolicies module flag ("Module Licensing" - see IModuleAccessService) -
+// enabled by default, same as every other module here, so nothing changes
+// for a tenant until an Owner explicitly turns it off.
 [ApiController]
 [Route("api/sla-policies")]
 [Authorize(Policy = "TenantStaff")]
@@ -21,17 +24,23 @@ public class SlaPoliciesController : ControllerBase
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
     private readonly IAuditLogService _auditLog;
+    private readonly IModuleAccessService _moduleAccess;
 
-    public SlaPoliciesController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog)
+    public SlaPoliciesController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog, IModuleAccessService moduleAccess)
     {
         _db = db;
         _tenantContext = tenantContext;
         _auditLog = auditLog;
+        _moduleAccess = moduleAccess;
     }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<SlaPolicyResponse>>> GetPolicies(CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.SlaPolicies, ct)) return ModuleDisabled();
+
         var policies = await _db.SlaPolicies.OrderBy(p => p.Name).ToListAsync(ct);
         return Ok(policies.Select(SlaPolicyResponse.FromEntity));
     }
@@ -42,6 +51,7 @@ public class SlaPoliciesController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.SlaPolicies, ct)) return ModuleDisabled();
 
         var conflict = await _db.SlaPolicies.AnyAsync(p => p.Priority == request.Priority, ct);
         if (conflict)
@@ -76,6 +86,7 @@ public class SlaPoliciesController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.SlaPolicies, ct)) return ModuleDisabled();
 
         var policy = await _db.SlaPolicies.FirstOrDefaultAsync(p => p.Id == id, ct);
         if (policy is null) return NotFound();
@@ -97,6 +108,7 @@ public class SlaPoliciesController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.SlaPolicies, ct)) return ModuleDisabled();
 
         var policy = await _db.SlaPolicies.FirstOrDefaultAsync(p => p.Id == id, ct);
         if (policy is null) return NotFound();
@@ -112,4 +124,8 @@ public class SlaPoliciesController : ControllerBase
         await _db.SaveChangesAsync(ct);
         return NoContent();
     }
+
+    private ObjectResult ModuleDisabled() =>
+        StatusCode(StatusCodes.Status403Forbidden,
+            new { message = "SLA Policies isn't enabled for this workspace - contact WMX to turn it on." });
 }

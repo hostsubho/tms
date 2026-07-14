@@ -47,6 +47,11 @@ export default function TenantDashboardPage() {
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [cmdbEnabled, setCmdbEnabled] = useState(false);
+  // "Module Licensing" - every module this tenant currently has enabled
+  // (see IModuleAccessService on the backend), used to hide nav links for
+  // anything an Owner has switched off rather than showing them
+  // unconditionally and letting the request 403.
+  const [enabledModules, setEnabledModules] = useState<Set<string> | null>(null);
 
   const [showCreate, setShowCreate] = useState(false);
   const [subject, setSubject] = useState("");
@@ -83,15 +88,28 @@ export default function TenantDashboardPage() {
         // Non-fatal: category dropdown just stays empty.
       });
 
-    // Module 10 - Asset Management/CMDB: only show the nav link at all if
-    // this tenant has the feature flag on, rather than showing it
-    // unconditionally and having every non-CMDB tenant hit a 403.
-    apiFetch<{ cmdbEnabled: boolean }>("/api/tenant/me", { token: auth.accessToken })
-      .then((t) => setCmdbEnabled(t.cmdbEnabled))
+    // "Module Licensing" - only show a nav link at all if this tenant has
+    // the corresponding module enabled, rather than showing it
+    // unconditionally and having a disabled-module tenant hit a 403.
+    apiFetch<{ cmdbEnabled: boolean; enabledModules: string[] }>("/api/tenant/me", { token: auth.accessToken })
+      .then((t) => {
+        setCmdbEnabled(t.cmdbEnabled);
+        setEnabledModules(new Set(t.enabledModules));
+      })
       .catch(() => {
-        // Non-fatal: nav link just stays hidden.
+        // Non-fatal: nav links just stay hidden.
       });
   }, [router]);
+
+  // Defaults every module to visible until the /api/tenant/me fetch above
+  // resolves - avoids a flash of hidden nav buttons on first render, same
+  // "fail open on the client, the backend still enforces it" tradeoff the
+  // dashboard already accepted for cmdbEnabled defaulting to false pre-fetch
+  // (the one case that already fails closed, since Assets being a rarer
+  // add-on module is the safer default to hide until proven otherwise).
+  function isModuleEnabled(key: string): boolean {
+    return enabledModules === null || enabledModules.has(key);
+  }
 
   function handleLogout() {
     tenantAuth.clear();
@@ -149,30 +167,38 @@ export default function TenantDashboardPage() {
               }}
             />
           )}
-          <button
-            onClick={() => router.push("/dashboard/reports")}
-            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
-          >
-            Reports
-          </button>
-          <button
-            onClick={() => router.push("/dashboard/automation")}
-            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
-          >
-            Automation
-          </button>
-          <button
-            onClick={() => router.push("/dashboard/knowledge-base")}
-            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
-          >
-            Knowledge Base
-          </button>
-          <button
-            onClick={() => router.push("/dashboard/sla-policies")}
-            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
-          >
-            SLA Policies
-          </button>
+          {isModuleEnabled("AdvancedReports") && (
+            <button
+              onClick={() => router.push("/dashboard/reports")}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+            >
+              Reports
+            </button>
+          )}
+          {isModuleEnabled("Automation") && (
+            <button
+              onClick={() => router.push("/dashboard/automation")}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+            >
+              Automation
+            </button>
+          )}
+          {isModuleEnabled("KnowledgeBase") && (
+            <button
+              onClick={() => router.push("/dashboard/knowledge-base")}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+            >
+              Knowledge Base
+            </button>
+          )}
+          {isModuleEnabled("SlaPolicies") && (
+            <button
+              onClick={() => router.push("/dashboard/sla-policies")}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+            >
+              SLA Policies
+            </button>
+          )}
           {/* Module 12: access is enforced by the backend's ViewAuditLog
               permission (Admin/Manager always have it; anyone else needs a
               custom role granting it) - the page itself shows a clear
@@ -184,7 +210,7 @@ export default function TenantDashboardPage() {
           >
             Audit Log
           </button>
-          {role === "Admin" && (
+          {role === "Admin" && isModuleEnabled("CustomRoles") && (
             <button
               onClick={() => router.push("/dashboard/roles")}
               className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
@@ -195,7 +221,7 @@ export default function TenantDashboardPage() {
           {/* Module 11: API keys and webhooks are standing credentials with
               broad access to this tenant's tickets - Admin-only, same
               reasoning as Roles above. */}
-          {role === "Admin" && (
+          {role === "Admin" && isModuleEnabled("IntegrationsApi") && (
             <button
               onClick={() => router.push("/dashboard/integrations")}
               className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
@@ -206,7 +232,7 @@ export default function TenantDashboardPage() {
           {/* Module 1 - SSO: configuring an IdP is a live credential granting
               sign-in access to the whole workspace - Admin-only, same
               reasoning as Roles/Integrations above. */}
-          {role === "Admin" && (
+          {role === "Admin" && isModuleEnabled("Sso") && (
             <button
               onClick={() => router.push("/dashboard/sso")}
               className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
@@ -223,6 +249,17 @@ export default function TenantDashboardPage() {
               className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
             >
               Billing
+            </button>
+          )}
+          {/* Client customization - theming. Not module-gated (unlike the
+              buttons above) - every tenant can customize their own look
+              regardless of which optional modules they've licensed. */}
+          {role === "Admin" && (
+            <button
+              onClick={() => router.push("/dashboard/theme")}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+            >
+              Theme
             </button>
           )}
           {cmdbEnabled && (

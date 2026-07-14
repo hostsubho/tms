@@ -23,17 +23,23 @@ public class ApiKeysController : ControllerBase
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
     private readonly IAuditLogService _auditLog;
+    private readonly IModuleAccessService _moduleAccess;
 
-    public ApiKeysController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog)
+    public ApiKeysController(TmsDbContext db, ITenantContext tenantContext, IAuditLogService auditLog, IModuleAccessService moduleAccess)
     {
         _db = db;
         _tenantContext = tenantContext;
         _auditLog = auditLog;
+        _moduleAccess = moduleAccess;
     }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<ApiKeyResponse>>> GetKeys(CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.IntegrationsApi, ct)) return ModuleDisabled();
+
         var keys = await _db.ApiKeys.OrderByDescending(k => k.CreatedAt).ToListAsync(ct);
         return Ok(keys.Select(ApiKeyResponse.FromEntity));
     }
@@ -43,6 +49,7 @@ public class ApiKeysController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.IntegrationsApi, ct)) return ModuleDisabled();
 
         var generated = ApiKeyGenerator.Generate();
         var key = new ApiKey
@@ -74,6 +81,7 @@ public class ApiKeysController : ControllerBase
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.IntegrationsApi, ct)) return ModuleDisabled();
 
         var key = await _db.ApiKeys.FirstOrDefaultAsync(k => k.Id == id, ct);
         if (key is null) return NotFound();
@@ -87,4 +95,8 @@ public class ApiKeysController : ControllerBase
         await _db.SaveChangesAsync(ct);
         return NoContent();
     }
+
+    private ObjectResult ModuleDisabled() =>
+        StatusCode(StatusCodes.Status403Forbidden,
+            new { message = "Integrations & API isn't enabled for this workspace - contact WMX to turn it on." });
 }
