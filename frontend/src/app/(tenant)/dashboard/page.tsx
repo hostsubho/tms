@@ -182,6 +182,17 @@ export default function TenantDashboardPage() {
               Roles
             </button>
           )}
+          {/* Module 11: API keys and webhooks are standing credentials with
+              broad access to this tenant's tickets - Admin-only, same
+              reasoning as Roles above. */}
+          {role === "Admin" && (
+            <button
+              onClick={() => router.push("/dashboard/integrations")}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+            >
+              Integrations
+            </button>
+          )}
           <button
             onClick={() => setShowCreate((v) => !v)}
             className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800"

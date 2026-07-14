@@ -75,6 +75,9 @@ Module 5.4 (Audit Logging) adds `AuditLogs`:
 Module 12 (Roles & Permissions, custom roles) adds `CustomRoles`, `CustomRolePermissions`, and `CustomRoleId` on `Users`:
 `dotnet ef migrations add AddCustomRoles --output-dir Migrations && dotnet ef database update`
 
+Module 11 (Integrations & Public API) adds `ApiKeys`, `WebhookSubscriptions`, and `WebhookDeliveryLogs`:
+`dotnet ef migrations add AddIntegrationsApiKeysAndWebhooks --output-dir Migrations && dotnet ef database update`
+
 Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
 required FK and there's no admin UI for creating plans yet:
 `psql "<connection string>" -f docs/seed-plans.sql`
@@ -209,6 +212,24 @@ A platform token carries `scope=platform_admin` + `platform_role=<PlatformRole>`
 and never a `tenant_id` claim, so it can't be used against `/api/tickets` etc.,
 and a tenant AppUser's token can't be used here — completely separate
 authorization surfaces by design.
+
+**API Keys** (`/api/api-keys`) — Module 11 (Integrations & Public API), requires the `TenantStaff` policy **and** the `Admin` role
+- An API key is a standing credential granting the versioned public REST API (below) broad, tenant-wide access to tickets — at least as sensitive as the RBAC surface itself, so this is Admin-only for both read and write, same reasoning as Custom Roles.
+- `GET /` — list keys (name, key prefix, created/last-used/revoked timestamps) — the full key is never retrievable after creation. `POST /` — `{ name }`, returns the plaintext key **exactly once**; only a SHA-256 hash is ever persisted (same convention `RefreshToken` already uses). `DELETE /{id}` — soft-revoke (`RevokedAt` stamped, not a hard delete) so `CreatedAt`/`LastUsedAt` stay reviewable.
+
+**Webhooks** (`/api/webhooks`) — Module 11, requires the `TenantStaff` policy **and** the `Admin` role
+- `GET /` — list subscriptions (url, event, active state) — the signing secret is never retrievable after creation. `POST /` — `{ url, event }`; `url` must resolve to a public, non-private/loopback/link-local address over `https` (`WebhookUrlValidator`) or this 400s; returns the signing secret **exactly once**, stored server-side in reversible form (not hashed, unlike API keys) since every delivery needs to reuse it to compute an HMAC. `PATCH /{id}` — `{ isActive }` only; changing the URL or event is delete-and-recreate (same convention `SlaPolicy.Priority` uses for its own immutable-after-creation field), which also forces a fresh secret. `DELETE /{id}` — removes the subscription; past delivery logs stay, now pointing at a deleted subscription, same convention as `AutomationRuleLog`.
+- `GET /{id}/logs` — most recent 50 delivery attempts (success, HTTP status, error, timestamp).
+- Delivery: `WebhookService` POSTs a JSON payload to every active subscription matching the event, synchronously and inline within the same request that triggered it (ticket create/update) — same no-background-worker constraint as SLA breach detection and Notifications elsewhere in this codebase. Each request carries an `X-Tms-Signature` header: `HMAC-SHA256(secret, rawRequestBody)`, hex-encoded, so a receiver can verify the payload wasn't tampered with or spoofed. A 5-second per-delivery timeout keeps one slow/unreachable subscriber from stalling the triggering request indefinitely; a failed delivery is logged, never thrown back to the caller.
+- **Known limitation, documented rather than silently shipped**: the private/loopback IP check runs once, at subscription-creation time, not re-checked before every delivery — a DNS-rebinding attack (a hostname that resolves to a safe public IP when the admin adds it, then to an internal IP later) would slip past this. Closing that fully needs either re-resolving and re-validating immediately before every single delivery, or an `HttpClient` that validates the connected socket's IP at connect time. Same category of tradeoff as Module 5's own "run webhook" automation action being cut entirely for this reason — this module accepts the risk at a narrower, admin-configured (not tenant-user-configured) surface instead.
+
+**Public Tickets API** (`/api/v1/tickets`) — Module 11, a separate `X-Api-Key` authentication scheme (not a JWT)
+- Send the plaintext key from `POST /api/api-keys` as an `X-Api-Key` header — no `Authorization: Bearer` involved. Authenticated via `ApiKeyAuthenticationHandler`, which also stamps `LastUsedAt` on the key. Independent authorization surface from staff/portal JWTs: neither can substitute for the other (a valid staff JWT can't call this API, and an API key can't call any staff/portal endpoint).
+- Deliberately a narrower surface than the staff `/api/tickets`: no subject/description edits, no comments, no CSAT — scoped to exactly the spec's done-when bar. `GET /`, `GET /{id}` — read tickets (filterable by `status`). `POST /` — `{ subject, description?, priority?, categoryId?, assigneeId? }`; same server-side SLA-policy matching as every other intake path; fires the same automation-rule/notification pipeline as the staff and portal create endpoints; audit-logged with an actor label of `"API key: {name}"` (no `AppUser`/`PortalCustomer` to attribute it to — `RequesterId`/`CustomerId` stay null). `PATCH /{id}` — `{ status?, priority?, assigneeId? }`; a status change here (or one made through the staff UI) fires the `TicketStatusChanged` webhook event above.
+- Versioned (`v1`) so the response shape can evolve later without breaking an existing integration.
+- Implementation note: `"ApiKey"` is a non-default authentication scheme, only invoked on demand inside the authorization middleware — which runs *after* `TenantResolutionMiddleware` in the pipeline. Rather than depend on pipeline ordering (which every staff/portal request also relies on for the default JwtBearer scheme), `ApiKeyAuthenticationHandler` sets `ITenantContext.TenantId` itself, directly, the moment it resolves the key, instead of leaving it to be picked up from a claim later.
+
+**Scoped out of this module**: native chat-app integrations (Slack/Teams/Jira) and full scoped-OAuth app registrations — both need a real third-party app registration and external accounts to build against, not something a coding pass alone can stand up.
 
 ## Multi-tenancy
 
