@@ -36,6 +36,9 @@ public class TmsDbContext : DbContext
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<CustomRole> CustomRoles => Set<CustomRole>();
     public DbSet<CustomRolePermission> CustomRolePermissions => Set<CustomRolePermission>();
+    public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
+    public DbSet<WebhookSubscription> WebhookSubscriptions => Set<WebhookSubscription>();
+    public DbSet<WebhookDeliveryLog> WebhookDeliveryLogs => Set<WebhookDeliveryLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -187,6 +190,33 @@ public class TmsDbContext : DbContext
             .HasQueryFilter(p => p.TenantId == _tenantContext.TenantId);
         modelBuilder.Entity<CustomRolePermission>()
             .Property(p => p.Permission).HasConversion<string>();
+
+        // Module 11 - Integrations & Public API. KeyHash is looked up by
+        // ApiKeyAuthenticationHandler before the tenant is known (via
+        // IgnoreQueryFilters(), same pattern RefreshToken/AuthController
+        // already use), so it needs its own unique index independent of the
+        // TenantId+something composite indexes used elsewhere.
+        modelBuilder.Entity<ApiKey>()
+            .HasIndex(k => k.KeyHash).IsUnique();
+        modelBuilder.Entity<ApiKey>()
+            .HasQueryFilter(k => k.TenantId == _tenantContext.TenantId);
+
+        // Subscriptions are looked up per (Event, IsActive) on every ticket
+        // create/status-change - see WebhookService.DeliverAsync - same
+        // shape as AutomationRule's own (Trigger, IsActive) index.
+        modelBuilder.Entity<WebhookSubscription>()
+            .HasIndex(w => new { w.TenantId, w.Event, w.IsActive });
+        modelBuilder.Entity<WebhookSubscription>()
+            .HasQueryFilter(w => w.TenantId == _tenantContext.TenantId);
+        modelBuilder.Entity<WebhookSubscription>()
+            .Property(w => w.Event).HasConversion<string>();
+
+        modelBuilder.Entity<WebhookDeliveryLog>()
+            .HasIndex(l => new { l.WebhookSubscriptionId, l.AttemptedAt });
+        modelBuilder.Entity<WebhookDeliveryLog>()
+            .HasQueryFilter(l => l.TenantId == _tenantContext.TenantId);
+        modelBuilder.Entity<WebhookDeliveryLog>()
+            .Property(l => l.Event).HasConversion<string>();
 
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.

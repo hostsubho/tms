@@ -39,4 +39,11 @@ public static class ClaimsPrincipalExtensions
             ? id
             : throw new InvalidOperationException("Request is missing a valid customer id claim.");
     }
+
+    // Module 11 - Integrations & Public API. Only present on a ClaimsPrincipal
+    // produced by ApiKeyAuthenticationHandler - used purely for audit-log
+    // display (see PublicTicketsController), so this falls back to a generic
+    // label rather than throwing, same rationale as GetEmail() above.
+    public static string GetApiKeyName(this ClaimsPrincipal user) =>
+        user.FindFirst("api_key_name")?.Value ?? "unknown key";
 }

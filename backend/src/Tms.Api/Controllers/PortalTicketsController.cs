@@ -24,14 +24,16 @@ public class PortalTicketsController : ControllerBase
     private readonly INotificationService _notifications;
     private readonly IRuleEngineService _ruleEngine;
     private readonly IAuditLogService _auditLog;
+    private readonly IWebhookService _webhooks;
 
-    public PortalTicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications, IRuleEngineService ruleEngine, IAuditLogService auditLog)
+    public PortalTicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications, IRuleEngineService ruleEngine, IAuditLogService auditLog, IWebhookService webhooks)
     {
         _db = db;
         _tenantContext = tenantContext;
         _notifications = notifications;
         _ruleEngine = ruleEngine;
         _auditLog = auditLog;
+        _webhooks = webhooks;
     }
 
     [HttpGet]
@@ -149,6 +151,11 @@ public class PortalTicketsController : ControllerBase
             await _notifications.NotifyAdminsAsync(tenantId, NotificationType.NewTicket,
                 $"New ticket from the customer portal: '{ticket.Subject}'.", ticket.Id, ct);
         }
+
+        // Module 11 - Integrations & Public API: same TicketCreated webhook
+        // as the staff and public-API intake paths - a subscriber shouldn't
+        // miss portal-submitted tickets.
+        await _webhooks.NotifyTicketCreatedAsync(tenantId, ticket, ct);
 
         await _db.SaveChangesAsync(ct);
 

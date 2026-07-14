@@ -19,14 +19,16 @@ public class TicketsController : ControllerBase
     private readonly INotificationService _notifications;
     private readonly IRuleEngineService _ruleEngine;
     private readonly IAuditLogService _auditLog;
+    private readonly IWebhookService _webhooks;
 
-    public TicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications, IRuleEngineService ruleEngine, IAuditLogService auditLog)
+    public TicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications, IRuleEngineService ruleEngine, IAuditLogService auditLog, IWebhookService webhooks)
     {
         _db = db;
         _tenantContext = tenantContext;
         _notifications = notifications;
         _ruleEngine = ruleEngine;
         _auditLog = auditLog;
+        _webhooks = webhooks;
     }
 
     [HttpGet]
@@ -157,6 +159,13 @@ public class TicketsController : ControllerBase
                 $"New ticket needs triage: '{ticket.Subject}'.", ticket.Id, ct);
         }
 
+        // Module 11 - Integrations & Public API: fires regardless of intake
+        // channel, same as Notifications/RuleEngine above - a tenant's
+        // TicketCreated webhook subscription should hear about this ticket
+        // whether it came from the staff UI, the customer portal, or the
+        // public API.
+        await _webhooks.NotifyTicketCreatedAsync(tenantId, ticket, ct);
+
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GetTicket), new { id = ticket.Id }, TicketResponse.FromEntity(ticket, utcNow));
@@ -172,6 +181,7 @@ public class TicketsController : ControllerBase
         if (ticket is null) return NotFound();
 
         var previousAssigneeId = ticket.AssigneeId;
+        var previousStatus = ticket.Status;
 
         if (request.Subject is not null) ticket.Subject = request.Subject;
         if (request.Description is not null) ticket.Description = request.Description;
@@ -218,6 +228,15 @@ public class TicketsController : ControllerBase
         {
             await _notifications.NotifyUserAsync(tenantId, ticket.AssigneeId.Value, NotificationType.TicketAssigned,
                 $"You were assigned '{ticket.Subject}'.", ticket.Id, ct);
+        }
+
+        // Module 11 - Integrations & Public API: fires whether this PATCH's
+        // own Status field or an automation rule above is what actually
+        // changed it - a subscriber cares that the status changed, not which
+        // surface triggered it.
+        if (ticket.Status != previousStatus)
+        {
+            await _webhooks.NotifyTicketStatusChangedAsync(tenantId, ticket, previousStatus, ct);
         }
 
         await _db.SaveChangesAsync(ct);

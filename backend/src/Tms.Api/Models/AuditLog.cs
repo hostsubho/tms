@@ -25,6 +25,10 @@ public enum AuditEntityType
     // CustomRole/CustomRolePermission tables and AppUser.CustomRoleId do.
     CustomRole,
     User,
+    // Module 11 - Integrations & Public API. Same "no migration needed for
+    // a new enum value" reasoning as above.
+    ApiKey,
+    WebhookSubscription,
 }
 
 // Immutable, append-only - there is deliberately no update/delete endpoint

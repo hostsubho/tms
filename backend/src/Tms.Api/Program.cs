@@ -33,6 +33,17 @@ builder.Services.AddScoped<IRuleEngineService, RuleEngineService>();
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
+// Module 11 - Integrations & Public API. Typed HttpClient via
+// AddHttpClient so outbound webhook deliveries reuse pooled connections
+// rather than a raw `new HttpClient()` (socket-exhaustion pitfall). A
+// generous-but-bounded timeout here is a backstop only - WebhookService
+// applies its own tighter 5s-per-delivery timeout so one slow subscriber
+// can't stall a ticket create/update indefinitely.
+builder.Services.AddHttpClient<IWebhookService, WebhookService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+
 builder.Services.AddDbContext<TmsDbContext>(options =>
     options.UseNpgsql(connectionString));
 
@@ -59,7 +70,15 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)),
             ClockSkew = TimeSpan.FromSeconds(30),
         };
-    });
+    })
+    // Module 11 - Integrations & Public API. A second, independent
+    // authentication scheme alongside the default JwtBearer one above -
+    // external systems authenticate with an X-Api-Key header instead of a
+    // staff/portal JWT (see ApiKeyAuthenticationHandler). Registered here
+    // but never made the default, so every existing [Authorize] on staff/
+    // portal controllers keeps resolving against JwtBearer exactly as
+    // before; only the new "PublicApi" policy below opts into this scheme.
+    .AddScheme<ApiKeyAuthenticationSchemeOptions, ApiKeyAuthenticationHandler>("ApiKey", _ => { });
 
 builder.Services.AddAuthorization(options =>
 {
@@ -104,6 +123,16 @@ builder.Services.AddAuthorization(options =>
         options.AddPolicy($"Permission:{permission}", policy =>
             policy.Requirements.Add(new PermissionRequirement(permission)));
     }
+
+    // Module 11 - Integrations & Public API. Explicitly pinned to the
+    // "ApiKey" scheme only - a staff/portal JWT (even a valid, unexpired
+    // one) must NOT be usable against /api/v1/tickets, and an API key must
+    // not be usable against any staff/portal endpoint. Keeping these two
+    // credential types fully non-interchangeable is the point of having a
+    // separate scheme at all.
+    options.AddPolicy("PublicApi", policy =>
+        policy.AddAuthenticationSchemes("ApiKey")
+              .RequireClaim("scope", "public_api"));
 });
 
 builder.Services.AddCors(options =>
