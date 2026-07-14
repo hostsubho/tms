@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -30,6 +31,7 @@ builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IRuleEngineService, RuleEngineService>();
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
+builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
 builder.Services.AddDbContext<TmsDbContext>(options =>
     options.UseNpgsql(connectionString));
@@ -90,6 +92,18 @@ builder.Services.AddAuthorization(options =>
     // value) is enough to exclude both non-staff token types here.
     options.AddPolicy("TenantStaff", policy =>
         policy.RequireClaim(ClaimTypes.Role));
+
+    // Module 12 - Roles & Permissions: one policy per Permission enum
+    // value, each delegating to PermissionAuthorizationHandler (built-in
+    // Admin/Manager roles always pass; anyone else needs a custom role
+    // granting that specific permission - see the handler for the full
+    // reasoning). The enum is small and fixed in code, so pre-registering
+    // every value's policy here is simpler than a dynamic policy provider.
+    foreach (var permission in Enum.GetValues<Permission>())
+    {
+        options.AddPolicy($"Permission:{permission}", policy =>
+            policy.Requirements.Add(new PermissionRequirement(permission)));
+    }
 });
 
 builder.Services.AddCors(options =>

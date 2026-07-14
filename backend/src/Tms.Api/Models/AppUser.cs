@@ -1,8 +1,10 @@
 namespace Tms.Api.Models;
 
-// MVP roles for Phase 1 (see feature spec, Module 12). A full custom-role/
-// permission-set model comes in Phase 3; until then this fixed enum is the
-// source of truth for authorization checks.
+// MVP roles for Phase 1 (see feature spec, Module 12). This fixed enum
+// remains the source of truth for the built-in Admin/Manager/Agent/ReadOnly
+// roles and every existing [Authorize(Roles = ...)] check keeps working
+// unchanged - the Phase 3 custom-role/permission-set model (CustomRole,
+// below) is purely additive on top of it, not a replacement.
 public enum Role
 {
     Admin,
@@ -28,4 +30,14 @@ public class AppUser
     // this iteration, so per-channel granularity would be UI for controls
     // that don't do anything yet.
     public bool NotificationsEnabled { get; set; } = true;
+
+    // Module 12 - Roles & Permissions. A plain, unenforced (no FK
+    // constraint) reference to a CustomRole - same "dangling reference
+    // allowed" convention as AutomationRuleLog.RuleId - except here a
+    // dangling reference is actively prevented rather than tolerated:
+    // CustomRolesController.DeleteRole nulls this out for every affected
+    // user in the same transaction as the role's deletion, since silently
+    // stranding a user's permissions on a deleted role definition would be
+    // a correctness problem, not just cosmetic history.
+    public Guid? CustomRoleId { get; set; }
 }

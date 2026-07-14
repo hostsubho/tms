@@ -37,7 +37,7 @@ public class SlaPoliciesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = "Permission:ManageSlaPolicies")]
     public async Task<ActionResult<SlaPolicyResponse>> CreatePolicy([FromBody] CreateSlaPolicyRequest request, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId
@@ -71,7 +71,7 @@ public class SlaPoliciesController : ControllerBase
     }
 
     [HttpPatch("{id:guid}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = "Permission:ManageSlaPolicies")]
     public async Task<ActionResult<SlaPolicyResponse>> UpdatePolicy(Guid id, [FromBody] UpdateSlaPolicyRequest request, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId
@@ -92,7 +92,7 @@ public class SlaPoliciesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = "Permission:ManageSlaPolicies")]
     public async Task<IActionResult> DeletePolicy(Guid id, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId

@@ -34,6 +34,8 @@ public class TmsDbContext : DbContext
     public DbSet<KnowledgeArticle> KnowledgeArticles => Set<KnowledgeArticle>();
     public DbSet<KnowledgeArticleVersion> KnowledgeArticleVersions => Set<KnowledgeArticleVersion>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<CustomRole> CustomRoles => Set<CustomRole>();
+    public DbSet<CustomRolePermission> CustomRolePermissions => Set<CustomRolePermission>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -168,6 +170,23 @@ public class TmsDbContext : DbContext
             .Property(l => l.Action).HasConversion<string>();
         modelBuilder.Entity<AuditLog>()
             .Property(l => l.EntityType).HasConversion<string>();
+
+        // Module 12 - Roles & Permissions. Role names are read back per
+        // tenant sorted by name (small lists, no pagination needed);
+        // permissions are looked up per-role both when resolving a user's
+        // JWT claims at login and when rendering a role's checkbox state
+        // in the admin UI.
+        modelBuilder.Entity<CustomRole>()
+            .HasIndex(r => new { r.TenantId, r.Name });
+        modelBuilder.Entity<CustomRole>()
+            .HasQueryFilter(r => r.TenantId == _tenantContext.TenantId);
+
+        modelBuilder.Entity<CustomRolePermission>()
+            .HasIndex(p => p.CustomRoleId);
+        modelBuilder.Entity<CustomRolePermission>()
+            .HasQueryFilter(p => p.TenantId == _tenantContext.TenantId);
+        modelBuilder.Entity<CustomRolePermission>()
+            .Property(p => p.Permission).HasConversion<string>();
 
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.

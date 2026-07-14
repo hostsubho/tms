@@ -163,12 +163,23 @@ export default function TenantDashboardPage() {
           >
             SLA Policies
           </button>
-          {(role === "Admin" || role === "Manager") && (
+          {/* Module 12: access is enforced by the backend's ViewAuditLog
+              permission (Admin/Manager always have it; anyone else needs a
+              custom role granting it) - the page itself shows a clear
+              message if the signed-in user doesn't have access, so the nav
+              button isn't gated on Role here. */}
+          <button
+            onClick={() => router.push("/dashboard/audit-log")}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+          >
+            Audit Log
+          </button>
+          {role === "Admin" && (
             <button
-              onClick={() => router.push("/dashboard/audit-log")}
+              onClick={() => router.push("/dashboard/roles")}
               className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
             >
-              Audit Log
+              Roles
             </button>
           )}
           <button

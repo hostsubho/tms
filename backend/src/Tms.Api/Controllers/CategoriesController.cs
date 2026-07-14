@@ -34,7 +34,7 @@ public class CategoriesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = "Permission:ManageCategories")]
     public async Task<ActionResult<Category>> CreateCategory([FromBody] CreateCategoryRequest request, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId

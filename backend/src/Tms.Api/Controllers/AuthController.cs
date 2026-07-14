@@ -150,7 +150,19 @@ public class AuthController : ControllerBase
 
     private async Task<AuthResponse> IssueTokensAsync(AppUser user, CancellationToken ct)
     {
-        var accessToken = _tokenService.CreateAccessToken(user);
+        // Module 12 - Roles & Permissions: resolved here (not inside
+        // JwtTokenService, which has no database access - see its comment)
+        // and only queried at all if the user actually has a custom role,
+        // which is the common-case-fast-path for every tenant that hasn't
+        // adopted custom roles yet.
+        var permissions = user.CustomRoleId is null
+            ? Array.Empty<Permission>()
+            : await _db.CustomRolePermissions
+                .Where(p => p.CustomRoleId == user.CustomRoleId)
+                .Select(p => p.Permission)
+                .ToArrayAsync(ct);
+
+        var accessToken = _tokenService.CreateAccessToken(user, permissions);
         var refreshTokenPlaintext = _tokenService.GenerateRefreshToken();
 
         _db.RefreshTokens.Add(new RefreshToken

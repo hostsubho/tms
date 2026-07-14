@@ -37,7 +37,7 @@ public class AutomationRulesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = "Permission:ManageAutomationRules")]
     public async Task<ActionResult<AutomationRuleResponse>> CreateRule([FromBody] CreateAutomationRuleRequest request, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId
@@ -68,7 +68,7 @@ public class AutomationRulesController : ControllerBase
     }
 
     [HttpPatch("{id:guid}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = "Permission:ManageAutomationRules")]
     public async Task<ActionResult<AutomationRuleResponse>> UpdateRule(Guid id, [FromBody] UpdateAutomationRuleRequest request, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId
@@ -92,7 +92,7 @@ public class AutomationRulesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = "Permission:ManageAutomationRules")]
     public async Task<IActionResult> DeleteRule(Guid id, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId

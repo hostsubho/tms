@@ -19,6 +19,12 @@ public enum AuditEntityType
     SlaPolicy,
     AutomationRule,
     KnowledgeArticle,
+    // Module 12 - Roles & Permissions. New enum values serialize as plain
+    // text (see the HasConversion<string>() registration in TmsDbContext),
+    // so adding these doesn't require a migration of its own - only the new
+    // CustomRole/CustomRolePermission tables and AppUser.CustomRoleId do.
+    CustomRole,
+    User,
 }
 
 // Immutable, append-only - there is deliberately no update/delete endpoint

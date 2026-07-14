@@ -72,6 +72,9 @@ Module 6 (Knowledge Base) adds `KnowledgeArticles` and `KnowledgeArticleVersions
 Module 5.4 (Audit Logging) adds `AuditLogs`:
 `dotnet ef migrations add AddAuditLogs --output-dir Migrations && dotnet ef database update`
 
+Module 12 (Roles & Permissions, custom roles) adds `CustomRoles`, `CustomRolePermissions`, and `CustomRoleId` on `Users`:
+`dotnet ef migrations add AddCustomRoles --output-dir Migrations && dotnet ef database update`
+
 Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
 required FK and there's no admin UI for creating plans yet:
 `psql "<connection string>" -f docs/seed-plans.sql`
@@ -156,7 +159,8 @@ Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bea
 - `SlaEvaluator.IsResolutionBreached` was corrected alongside this: it now judges a resolved/closed ticket's breach status against its `ResolvedAt` timestamp, not `utcNow`. Previously, a ticket resolved comfortably inside its SLA window would flip to "breached" the moment someone viewed it after the due date had since passed in real time — purely an artifact of when it was looked at, not what actually happened. This affected the live `isResolutionBreached` field on every `TicketResponse`/`PortalTicketResponse` too, not just this report.
 
 **Users** (`/api/users`) — requires the `TenantStaff` policy
-- `GET /` — active tenant staff (id, email, role). No invite/deactivate/role-change endpoints yet - this exists only so a UI can let someone pick a specific teammate (the automation rule builder's "assign to agent" action, below) instead of requiring a hand-typed GUID.
+- `GET /` — active tenant staff (id, email, role, and as of Module 12 their assigned custom role id/name if any). Still no invite/deactivate/base-role-change endpoints - this exists so a UI can let someone pick a specific teammate (the automation rule builder's "assign to agent" action, below) instead of requiring a hand-typed GUID.
+- `PATCH /{id}/custom-role` — `{ customRoleId: Guid | null }`. `Admin` only, and deliberately **not** gated by any `Permission` - see Custom Roles below for why.
 
 **Automation Rules** (`/api/automation-rules`) — Module 5, requires the `TenantStaff` policy; write (`POST`/`PATCH`/`DELETE`) restricted to `Admin`/`Manager`
 - Scoped down from the full spec (see `docs/tms_spec.md` Module 5): one condition per rule (field + value), not full AND/OR condition groups; triggers limited to `TicketCreated`, `TicketUpdated`, `CustomerReplyReceived` — "SLA about to breach" needs proactive scanning ahead of a deadline, which this deployment has no scheduler to run, so it's left out. "Keyword in description" from the spec's trigger list is modeled as a *condition* (`DescriptionContains`) on `TicketCreated`, not a standalone trigger.
@@ -175,12 +179,18 @@ Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bea
 - `GET /{id}` — full article body; increments `ViewCount`.
 - `POST /{id}/feedback` — `{ helpful: bool }`; increments `HelpfulYesCount`/`HelpfulNoCount`.
 
-**Audit Logs** (`/api/audit-logs`) — Module 5.4 (Security & Compliance), requires the `TenantStaff` policy **and** `Admin`/`Manager` role
-- `GET /?entityType=&action=` — most recent 200 entries tenant-wide, newest first; both query params optional (`entityType` one of `Ticket`/`Category`/`SlaPolicy`/`AutomationRule`/`KnowledgeArticle`, `action` one of `Created`/`Updated`/`Deleted`). Read-only — there is no write endpoint anywhere; every row is a side effect of the action it describes, recorded by the other controllers below via `IAuditLogService.Record(...)` in the same DB transaction as the change itself (so an entry can never exist for a change that failed to save, and never be missing for one that succeeded).
-- Restricted to `Admin`/`Manager`, unlike most other staff `GET`s in this app (which are open to any `TenantStaff`-authenticated role) — an org-wide "who did what" compliance trail isn't something every agent needs visibility into.
+**Audit Logs** (`/api/audit-logs`) — Module 5.4 (Security & Compliance), requires the `TenantStaff` policy **and** the `ViewAuditLog` permission
+- `GET /?entityType=&action=` — most recent 200 entries tenant-wide, newest first; both query params optional (`entityType` one of `Ticket`/`Category`/`SlaPolicy`/`AutomationRule`/`KnowledgeArticle`/`CustomRole`/`User`, `action` one of `Created`/`Updated`/`Deleted`). Read-only — there is no write endpoint anywhere; every row is a side effect of the action it describes, recorded by the other controllers below via `IAuditLogService.Record(...)` in the same DB transaction as the change itself (so an entry can never exist for a change that failed to save, and never be missing for one that succeeded).
+- Restricted to the `ViewAuditLog` permission (Admin/Manager always have it; as of Module 12, so does anyone holding a custom role that grants it), unlike most other staff `GET`s in this app (which are open to any `TenantStaff`-authenticated role) — an org-wide "who did what" compliance trail isn't something every agent needs visibility into by default.
 - Scoped down from the full spec (see `docs/tms_spec.md` section 5.4): this is the tenant-level audit trail only — a global, cross-tenant audit log of platform-level actions (tenant created/suspended, plan changed, impersonation) is a distinct Super Admin concern that needs the impersonation/plan-change features it would describe to exist first, and is left for a later pass.
-- Recorded today: ticket create/update (staff and portal-submitted), category create, SLA policy create/update/delete, automation rule create/update/delete, knowledge article create/update/delete, and every automation rule firing (actor `"System (Automation)"`, satisfying Module 5's own "done when" bar: "a tenant admin can build a rule with no code and see it fire correctly in the audit log"). Ticket comments and CSAT submissions are not recorded — kept out of scope to avoid a noisy, low-signal trail; the version history already covers article edits in more detail, and comment content isn't a compliance-relevant "what changed."
+- Recorded today: ticket create/update (staff and portal-submitted), category create, SLA policy create/update/delete, automation rule create/update/delete, knowledge article create/update/delete, custom role create/update/delete, custom role assignment/removal on a user, and every automation rule firing (actor `"System (Automation)"`, satisfying Module 5's own "done when" bar: "a tenant admin can build a rule with no code and see it fire correctly in the audit log"). Ticket comments and CSAT submissions are not recorded — kept out of scope to avoid a noisy, low-signal trail; the version history already covers article edits in more detail, and comment content isn't a compliance-relevant "what changed."
 - `ActorLabel` is a denormalized snapshot (an email, `"Customer: {email}"` for portal-submitted tickets, or `"System (Automation)"`) rather than a live join to `Users` — a row still reads sensibly even if the acting user is later deactivated or deleted.
+
+**Custom Roles** (`/api/custom-roles`) — Module 12 (Roles & Permissions, tenant-level RBAC), requires the `TenantStaff` policy **and** the `Admin` role - the whole controller, both read and write
+- The fixed `Admin`/`Manager`/`Agent`/`ReadOnly` roles from Phase 1 are untouched and keep working exactly as before - this is purely additive. A `Permission` is a coarse, per-module capability, not a per-endpoint ACL: `ManageCategories`, `ManageSlaPolicies`, `ManageAutomationRules`, `ManageKnowledgeArticles`, `ViewAuditLog` - matching the spec's own framing for the done-when bar ("a custom role restricted to specific modules"). Ticket read/write itself isn't part of this set - every tenant staff member already works tickets regardless of role.
+- `GET /` — list custom roles with their granted permissions. `POST /` — `{ name, permissions: Permission[] }`. `PATCH /{id}` — `{ name?, permissions? }`; sending `permissions` replaces the full set (not a merge). `DELETE /{id}` — removes the role and its permission grants, and nulls `CustomRoleId` on every user currently holding it in the same transaction (unlike `AutomationRuleLog`/`KnowledgeArticleVersion`'s "dangling reference is harmless history" convention, silently stranding a user's permissions on a deleted role would be a correctness problem, not just cosmetic).
+- **Deliberately Admin-only, not gated by any `Permission`** — same for `PATCH /api/users/{id}/custom-role` (see Users above). This is the one place in the module where the design is intentionally *not* a superset of the old behavior: letting a permission-holder (or even a Manager) manage role definitions or assign them would open a privilege-escalation path - a custom role with even one granted permission could otherwise be used to create a broader role and assign it to itself or anyone else. Only the built-in `Admin` role can touch the RBAC surface itself.
+- Enforcement mechanism: `PermissionAuthorizationHandler` backs one `[Authorize(Policy = "Permission:X")]` per `Permission` value (registered in `Program.cs`). Admin/Manager succeed unconditionally, preserving 100% of pre-Module-12 behavior on every endpoint that used to be `[Authorize(Roles = "Admin,Manager")]` (Categories/SlaPolicies/AutomationRules/KnowledgeArticles write actions, plus the Audit Logs `GET`) - anyone else needs the specific permission. Permissions are snapshotted into a `permissions` JWT claim at login (`AuthController.IssueTokensAsync`), same staleness tradeoff already accepted for the `Role` claim itself - a reassignment takes effect on the affected user's next login/refresh, not instantly.
 
 **Platform Auth** (`/api/platform/auth`) — Super Admin console (spec section 5, distinct from Module 5's workflow automation above)
 - `POST /bootstrap` — `{ name, email, password }`. Only works once, while `PlatformUsers` is empty; creates the first `Owner`. 409 after that.
@@ -210,8 +220,12 @@ authorization surfaces by design.
   `ITenantContext`.
 - `docs/rls-policies.sql` adds Postgres Row-Level Security as a second layer
   (apply it after running migrations — it references tables that must already exist).
-- Roles are the fixed `Role` enum (`Admin`, `Manager`, `Agent`, `ReadOnly`) for
-  now — full custom roles/permissions are Phase 3 (Module 12) per the spec.
+- Roles are the fixed `Role` enum (`Admin`, `Manager`, `Agent`, `ReadOnly`),
+  now extended (Module 12) by an optional per-tenant `CustomRole` a user can
+  additionally hold, granting specific module permissions on top of their
+  base role — see Custom Roles above. Team/group structures for ticket
+  routing (also listed under Module 12 in the spec) are not built in this
+  iteration.
 - Staff-facing tenant controllers (`TicketsController`, `TenantController`,
   `SlaPoliciesController`, `CategoriesController`) use `[Authorize(Policy =
   "TenantStaff")]`, **not** bare `[Authorize]`. This matters as of Module 7:

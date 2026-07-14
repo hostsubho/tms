@@ -44,7 +44,7 @@ public class KnowledgeArticlesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = "Permission:ManageKnowledgeArticles")]
     public async Task<ActionResult<ArticleResponse>> CreateArticle([FromBody] CreateArticleRequest request, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId
@@ -75,7 +75,7 @@ public class KnowledgeArticlesController : ControllerBase
     }
 
     [HttpPatch("{id:guid}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = "Permission:ManageKnowledgeArticles")]
     public async Task<ActionResult<ArticleResponse>> UpdateArticle(Guid id, [FromBody] UpdateArticleRequest request, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId
@@ -115,7 +115,7 @@ public class KnowledgeArticlesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = "Permission:ManageKnowledgeArticles")]
     public async Task<IActionResult> DeleteArticle(Guid id, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId

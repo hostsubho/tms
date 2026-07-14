@@ -15,7 +15,7 @@ interface AuditLogEntry {
   timestamp: string;
 }
 
-const ENTITY_TYPES = ["Ticket", "Category", "SlaPolicy", "AutomationRule", "KnowledgeArticle"];
+const ENTITY_TYPES = ["Ticket", "Category", "SlaPolicy", "AutomationRule", "KnowledgeArticle", "CustomRole", "User"];
 const ACTIONS = ["Created", "Updated", "Deleted"];
 
 const ACTION_STYLES: Record<string, string> = {
@@ -79,13 +79,14 @@ export default function AuditLogPage() {
         <p className="max-w-2xl text-sm text-zinc-500">
           A tenant-wide, append-only record of who did what and when: ticket
           changes, SLA policy and automation rule edits, knowledge article
-          changes, and every automation rule firing. Restricted to Admins and
-          Managers.
+          changes, custom role changes, and every automation rule firing.
+          Restricted to Admins, Managers, and anyone granted the
+          &quot;View Audit Log&quot; permission via a custom role.
         </p>
 
         {forbidden && (
           <p className="text-sm text-zinc-500">
-            Only Admins and Managers can view the audit log.
+            You don&apos;t have permission to view the audit log.
           </p>
         )}
 

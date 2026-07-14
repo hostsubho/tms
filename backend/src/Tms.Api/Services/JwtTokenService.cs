@@ -15,9 +15,9 @@ public class JwtTokenService : IJwtTokenService
         _config = config;
     }
 
-    public AccessTokenResult CreateAccessToken(AppUser user)
+    public AccessTokenResult CreateAccessToken(AppUser user, IReadOnlyCollection<Permission>? permissions = null)
     {
-        var claims = new[]
+        var claims = new List<Claim>
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
             new Claim(JwtRegisteredClaimNames.Email, user.Email),
@@ -26,7 +26,19 @@ public class JwtTokenService : IJwtTokenService
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
 
-        return BuildToken(claims);
+        // Module 12 - Roles & Permissions: a custom role's granted
+        // permissions are snapshotted into the token at issuance, same
+        // tradeoff already accepted for the Role claim above - a
+        // permission change takes effect on next login/refresh, not
+        // instantly. Omitted entirely (rather than an empty claim) when
+        // there's nothing to grant, so tokens for the common case (no
+        // custom role) stay exactly as small as before this module existed.
+        if (permissions is { Count: > 0 })
+        {
+            claims.Add(new Claim("permissions", string.Join(',', permissions.Select(p => p.ToString()))));
+        }
+
+        return BuildToken(claims.ToArray());
     }
 
     public AccessTokenResult CreatePlatformAccessToken(PlatformUser user)

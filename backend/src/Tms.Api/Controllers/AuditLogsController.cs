@@ -11,9 +11,13 @@ namespace Tms.Api.Controllers;
 // write endpoint here because audit rows are only ever produced as a side
 // effect of the actions they describe (see the other controllers'
 // IAuditLogService.Record calls and RuleEngineService for automation
-// firings). Restricted to Admin/Manager rather than the broader TenantStaff
-// policy every other staff GET here uses - an org-wide "who did what"
-// compliance trail isn't something every agent needs visibility into.
+// firings). Restricted by the ViewAuditLog permission rather than the
+// broader TenantStaff policy every other staff GET here uses - an org-wide
+// "who did what" compliance trail isn't something every agent needs
+// visibility into by default. Admin/Manager always have it (see
+// PermissionAuthorizationHandler); as of Module 12, a tenant admin can also
+// grant it to a specific Agent/ReadOnly user via a custom role without
+// promoting them to Manager.
 [ApiController]
 [Route("api/audit-logs")]
 [Authorize(Policy = "TenantStaff")]
@@ -27,7 +31,7 @@ public class AuditLogsController : ControllerBase
     }
 
     [HttpGet]
-    [Authorize(Roles = "Admin,Manager")]
+    [Authorize(Policy = "Permission:ViewAuditLog")]
     public async Task<ActionResult<IEnumerable<AuditLogResponse>>> GetLogs(
         [FromQuery] AuditEntityType? entityType,
         [FromQuery] AuditAction? action,

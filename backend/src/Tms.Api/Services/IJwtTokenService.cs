@@ -6,7 +6,12 @@ public record AccessTokenResult(string Token, DateTime ExpiresAtUtc);
 
 public interface IJwtTokenService
 {
-    AccessTokenResult CreateAccessToken(AppUser user);
+    /// Module 12 - Roles & Permissions. `permissions` is the caller's
+    /// resolved set of grants from the user's assigned CustomRole (empty/
+    /// null if they have none) - JwtTokenService itself has no database
+    /// access (it's a stateless Singleton), so callers (AuthController)
+    /// resolve this before calling in.
+    AccessTokenResult CreateAccessToken(AppUser user, IReadOnlyCollection<Permission>? permissions = null);
 
     /// Platform (Super Admin) tokens carry "scope=platform_admin" (matching the
     /// PlatformAdmin authorization policy in Program.cs) plus a platform_role
