@@ -8,6 +8,13 @@ namespace Tms.Api.Controllers;
 
 public record CreateTenantRequest(string Name, string Subdomain, Guid PlanId, int TrialDays = 14);
 
+// Module 10 / Super Admin 5.1 - "Tenant-level feature flags." Scoped to
+// exactly the one flag that exists today (CmdbEnabled) rather than a
+// generic name/value flag store - see Tenant.CmdbEnabled's own comment for
+// why. Shaped as an object (not a bare bool) so a future second flag can be
+// added to the same request without another endpoint.
+public record UpdateFeatureFlagsRequest(bool CmdbEnabled);
+
 // Platform-only endpoints (Super Admin console, Module 5.1 - Tenant Lifecycle
 // Management). Protected by PlatformUser auth exclusively - a tenant AppUser's
 // JWT has no "scope=platform_admin" claim so it can never satisfy these.
@@ -94,5 +101,17 @@ public class SuperAdminTenantsController : ControllerBase
         tenant.Status = TenantStatus.Active;
         await _db.SaveChangesAsync(ct);
         return NoContent();
+    }
+
+    [HttpPatch("{id:guid}/feature-flags")]
+    [Authorize(Policy = "PlatformManage")]
+    public async Task<ActionResult<Tenant>> UpdateFeatureFlags(Guid id, [FromBody] UpdateFeatureFlagsRequest request, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == id, ct);
+        if (tenant is null) return NotFound();
+
+        tenant.CmdbEnabled = request.CmdbEnabled;
+        await _db.SaveChangesAsync(ct);
+        return Ok(tenant);
     }
 }

@@ -41,6 +41,8 @@ public class TmsDbContext : DbContext
     public DbSet<WebhookDeliveryLog> WebhookDeliveryLogs => Set<WebhookDeliveryLog>();
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<BillingCredit> BillingCredits => Set<BillingCredit>();
+    public DbSet<Asset> Assets => Set<Asset>();
+    public DbSet<TicketAsset> TicketAssets => Set<TicketAsset>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -239,6 +241,31 @@ public class TmsDbContext : DbContext
             .HasIndex(c => new { c.TenantId, c.CreatedAt });
         modelBuilder.Entity<BillingCredit>()
             .HasQueryFilter(c => c.TenantId == _tenantContext.TenantId);
+
+        // Module 10 - Asset Management/CMDB. Listed alphabetically by name
+        // for the asset registry view; Type/Status filters (query params on
+        // GET /api/assets) don't need their own index at today's per-tenant
+        // asset volumes.
+        modelBuilder.Entity<Asset>()
+            .HasIndex(a => new { a.TenantId, a.Name });
+        modelBuilder.Entity<Asset>()
+            .HasQueryFilter(a => a.TenantId == _tenantContext.TenantId);
+        modelBuilder.Entity<Asset>()
+            .Property(a => a.Type).HasConversion<string>();
+        modelBuilder.Entity<Asset>()
+            .Property(a => a.Status).HasConversion<string>();
+
+        // Looked up both directions - an asset's ticket history (by AssetId)
+        // and a ticket's linked assets (by TicketId) - so both get an index;
+        // uniqueness on the pair prevents the same ticket being linked to
+        // the same asset twice (LinkTicket already checks this explicitly,
+        // this is the DB-level backstop).
+        modelBuilder.Entity<TicketAsset>()
+            .HasIndex(l => new { l.AssetId, l.TicketId }).IsUnique();
+        modelBuilder.Entity<TicketAsset>()
+            .HasIndex(l => l.TicketId);
+        modelBuilder.Entity<TicketAsset>()
+            .HasQueryFilter(l => l.TenantId == _tenantContext.TenantId);
 
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.

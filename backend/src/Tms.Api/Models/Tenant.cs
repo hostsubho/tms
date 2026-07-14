@@ -40,4 +40,16 @@ public class Tenant
     // reused even if the tenant later resubscribes, since that would show up
     // as a *new* Stripe subscription anyway.
     public DateTime? ChurnedAt { get; set; }
+
+    // Module 10 - Asset Management/CMDB, and Super Admin 5.1's "tenant-level
+    // feature flags" bullet. Scoped down from a general per-tenant
+    // feature-flag system (which would need a generic flag-name/value store)
+    // to exactly the one flag the spec calls out by name ("turn on/off
+    // specific modules (e.g., CMDB...) per tenant regardless of plan, for
+    // pilots or negotiated deals") - defaults false so no existing tenant
+    // suddenly gains a module it never asked for. Toggled by Owner/
+    // PlatformAdmin via SuperAdminTenantsController, checked by
+    // AssetsController on every request (not by a Plan check - the whole
+    // point is this is independent of what plan the tenant is on).
+    public bool CmdbEnabled { get; set; }
 }

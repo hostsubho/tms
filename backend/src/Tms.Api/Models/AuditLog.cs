@@ -31,6 +31,8 @@ public enum AuditEntityType
     WebhookSubscription,
     // Module 5.2 - Plans & Billing Administration. Same reasoning again.
     Billing,
+    // Module 10 - Asset Management/CMDB. Same reasoning again.
+    Asset,
 }
 
 // Immutable, append-only - there is deliberately no update/delete endpoint

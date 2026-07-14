@@ -20,6 +20,12 @@ public enum Permission
     ManageAutomationRules,
     ManageKnowledgeArticles,
     ViewAuditLog,
+    // Module 10 - Asset Management/CMDB. Covers creating/editing/deleting
+    // asset records themselves (the registry), not linking an existing
+    // asset to a ticket - any tenant staff can do that while working a
+    // ticket, same as they can already reassign a ticket without holding
+    // any Permission.
+    ManageAssets,
 }
 
 public class CustomRole

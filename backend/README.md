@@ -81,6 +81,9 @@ Module 11 (Integrations & Public API) adds `ApiKeys`, `WebhookSubscriptions`, an
 Module 5.2 (Plans & Billing Administration) adds `StripeCustomerId`/`StripeSubscriptionId`/`CurrentPeriodEnd`/`ChurnedAt` to `Tenants`, `StripePriceId` to `Plans`, and two new tables (`Invoices`, `BillingCredits`):
 `dotnet ef migrations add AddBillingAndPlans --output-dir Migrations && dotnet ef database update`
 
+Module 10 (Asset Management/CMDB) adds `CmdbEnabled` to `Tenants` and two new tables (`Assets`, `TicketAssets`):
+`dotnet ef migrations add AddAssetsAndCmdb --output-dir Migrations && dotnet ef database update`
+
 Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
 required FK and there's no admin UI for creating plans yet:
 `psql "<connection string>" -f docs/seed-plans.sql`
@@ -191,6 +194,7 @@ Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bea
 - `POST /` — creates a ticket; `TenantId`/`RequesterId`/`SlaPolicyId` are always set server-side, never from the request body. `SlaPolicyId` is auto-matched from the tenant's SLA policies by the ticket's `Priority` (see Module 4).
 - `PATCH /{id}` — partial update (status, priority, assignee, etc.). Does **not** recompute `DueAt`/`ResponseDueAt` — SLA due dates are a one-time commitment made at creation.
 - `GET /{id}/comments`, `POST /{id}/comments` — `isInternal` flag separates agent notes from customer-visible replies; every comment posted here (the staff surface) sets `FirstRespondedAt` the first time, used for response-SLA breach detection. Comments posted through the customer portal (`/api/portal/tickets/{id}/comments`, Module 7) do **not** advance `FirstRespondedAt` — it measures how fast staff reply to the customer, not the customer's own messages.
+- `GET /{id}/assets` — Module 10 (Asset Management/CMDB): assets linked to this ticket, for the ticket detail page's "linked assets" panel. Same `CmdbEnabled` feature-flag gate as `/api/assets` (see below) — 403s rather than silently returning an empty list, so the frontend can tell "no assets linked yet" apart from "this workspace doesn't have CMDB."
 
 **Categories** (`/api/categories`)
 - `GET /`
@@ -262,6 +266,14 @@ Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bea
 - **Deliberately Admin-only, not gated by any `Permission`** — same for `PATCH /api/users/{id}/custom-role` (see Users above). This is the one place in the module where the design is intentionally *not* a superset of the old behavior: letting a permission-holder (or even a Manager) manage role definitions or assign them would open a privilege-escalation path - a custom role with even one granted permission could otherwise be used to create a broader role and assign it to itself or anyone else. Only the built-in `Admin` role can touch the RBAC surface itself.
 - Enforcement mechanism: `PermissionAuthorizationHandler` backs one `[Authorize(Policy = "Permission:X")]` per `Permission` value (registered in `Program.cs`). Admin/Manager succeed unconditionally, preserving 100% of pre-Module-12 behavior on every endpoint that used to be `[Authorize(Roles = "Admin,Manager")]` (Categories/SlaPolicies/AutomationRules/KnowledgeArticles write actions, plus the Audit Logs `GET`) - anyone else needs the specific permission. Permissions are snapshotted into a `permissions` JWT claim at login (`AuthController.IssueTokensAsync`), same staleness tradeoff already accepted for the `Role` claim itself - a reassignment takes effect on the affected user's next login/refresh, not instantly.
 
+**Assets** (`/api/assets`) — Module 10 (Asset Management/CMDB), requires the `TenantStaff` policy, gated behind the `Tenant.CmdbEnabled` feature flag
+- Every action here (and the linked-assets endpoint on Tickets below) 403s with a clear message if the tenant's `CmdbEnabled` flag is off — an Enterprise add-on turned on per tenant by a Super Admin (see Platform Tenants below), independent of Plan, not something every Enterprise-priced tenant automatically gets.
+- `GET /?type=&status=` — list assets, both filters optional. `GET /{id}` — single asset. Any tenant staff.
+- `POST /`, `PATCH /{id}`, `DELETE /{id}` — creating/editing/retiring the asset registry itself is a config action, restricted to the `ManageAssets` permission (Admin/Manager always have it, same as every other `Permission:X`-gated write in this app). `DELETE` also removes that asset's `TicketAsset` links (unlike `AutomationRuleLog`'s "dangling reference is harmless history" convention — a link to a deleted asset has nothing left to describe).
+- `GET /{id}/tickets` — an asset's ticket history (subject/status/priority/created, not the full ticket), satisfying the spec's "history is visible from the asset record" done-when bar.
+- `POST /{id}/tickets` — `{ ticketId }`, `DELETE /{id}/tickets/{ticketId}` — link/unlink an existing ticket to/from an asset. Open to any tenant staff, not `ManageAssets`-gated — this is routine ticket work (like reassigning a ticket), not a registry-config action. A duplicate link 409s (checked up front, and backstopped by a unique DB index in case of a concurrent double-submit).
+- Scoped down from the full spec (see `docs/tms_spec.md` Module 10): a flat asset record with a type/status, not a full CI-to-CI relationship graph (e.g. "this VM runs on that host") — not needed to satisfy the spec's own done-when bar.
+
 **Platform Auth** (`/api/platform/auth`) — Super Admin console (spec section 5, distinct from Module 5's workflow automation above)
 - `POST /bootstrap` — `{ name, email, password }`. Only works once, while `PlatformUsers` is empty; creates the first `Owner`. 409 after that.
 - `POST /login` — `{ email, password }`.
@@ -274,6 +286,7 @@ this iteration — re-login when the 15 min access token expires).
 - `GET /`, `GET /{id}` — any platform role (`Owner`, `PlatformAdmin`, `SupportEngineer`, `BillingAdmin`, `ReadOnlyAnalyst`)
 - `POST /` — `{ name, subdomain, planId, trialDays? }`. `Owner`/`PlatformAdmin` only.
 - `POST /{id}/suspend`, `POST /{id}/reactivate` — `Owner`/`PlatformAdmin` only.
+- `PATCH /{id}/feature-flags` — `{ cmdbEnabled }`. `Owner`/`PlatformAdmin` only. Module 10's "tenant-level feature flag" — scoped to exactly the one flag that exists today rather than a generic name/value flag store (see `Tenant.CmdbEnabled`'s own code comment); shaped as an object so a future second flag slots into the same request/endpoint.
 
 A platform token carries `scope=platform_admin` + `platform_role=<PlatformRole>`
 and never a `tenant_id` claim, so it can't be used against `/api/tickets` etc.,

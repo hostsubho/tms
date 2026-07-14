@@ -46,6 +46,7 @@ export default function TenantDashboardPage() {
   const [email, setEmail] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [cmdbEnabled, setCmdbEnabled] = useState(false);
 
   const [showCreate, setShowCreate] = useState(false);
   const [subject, setSubject] = useState("");
@@ -80,6 +81,15 @@ export default function TenantDashboardPage() {
       .then(setCategories)
       .catch(() => {
         // Non-fatal: category dropdown just stays empty.
+      });
+
+    // Module 10 - Asset Management/CMDB: only show the nav link at all if
+    // this tenant has the feature flag on, rather than showing it
+    // unconditionally and having every non-CMDB tenant hit a 403.
+    apiFetch<{ cmdbEnabled: boolean }>("/api/tenant/me", { token: auth.accessToken })
+      .then((t) => setCmdbEnabled(t.cmdbEnabled))
+      .catch(() => {
+        // Non-fatal: nav link just stays hidden.
       });
   }, [router]);
 
@@ -202,6 +212,14 @@ export default function TenantDashboardPage() {
               className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
             >
               Billing
+            </button>
+          )}
+          {cmdbEnabled && (
+            <button
+              onClick={() => router.push("/dashboard/assets")}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+            >
+              Assets
             </button>
           )}
           <button

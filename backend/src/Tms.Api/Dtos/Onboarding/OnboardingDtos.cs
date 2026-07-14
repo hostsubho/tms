@@ -22,7 +22,12 @@ public record TenantSettingsResponse(
     string? PrimaryColor,
     Guid PlanId,
     string Status,
-    DateTime? TrialEndsAt);
+    DateTime? TrialEndsAt,
+    // Module 10 - Asset Management/CMDB. Exposed here (not just enforced
+    // server-side by AssetsController) so the tenant dashboard can decide
+    // whether to show the "Assets" nav link at all, rather than showing it
+    // unconditionally and letting every non-CMDB tenant hit a 403.
+    bool CmdbEnabled);
 
 public record UpdateTenantSettingsRequest(string? Name, string? TimeZone, string? LogoUrl, string? PrimaryColor);
 

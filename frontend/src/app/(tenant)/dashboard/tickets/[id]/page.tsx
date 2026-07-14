@@ -36,6 +36,14 @@ interface Comment {
   createdAt: string;
 }
 
+// Module 10 - Asset Management/CMDB
+interface LinkedAsset {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+}
+
 const STATUS_OPTIONS = ["New", "Open", "Pending", "Resolved", "Closed"];
 const PRIORITY_OPTIONS = ["Low", "Medium", "High", "Urgent"];
 
@@ -56,6 +64,18 @@ export default function TicketDetailPage() {
   const [commentError, setCommentError] = useState<string | null>(null);
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  // Module 10 - Asset Management/CMDB. cmdbAvailable is null until the
+  // first /assets fetch resolves - a 403 (CMDB not enabled for this tenant)
+  // sets it false and hides the whole panel, rather than showing an
+  // always-empty "linked assets" section on every tenant that never asked
+  // for this module.
+  const [cmdbAvailable, setCmdbAvailable] = useState<boolean | null>(null);
+  const [linkedAssets, setLinkedAssets] = useState<LinkedAsset[]>([]);
+  const [allAssets, setAllAssets] = useState<LinkedAsset[]>([]);
+  const [selectedAssetId, setSelectedAssetId] = useState("");
+  const [linkingAsset, setLinkingAsset] = useState(false);
+  const [assetError, setAssetError] = useState<string | null>(null);
 
   const loadTicket = useCallback(
     async (token: string) => {
@@ -78,6 +98,28 @@ export default function TicketDetailPage() {
     [ticketId, router],
   );
 
+  const loadAssets = useCallback(
+    async (token: string) => {
+      try {
+        const linked = await apiFetch<LinkedAsset[]>(`/api/tickets/${ticketId}/assets`, { token });
+        setLinkedAssets(linked);
+        setCmdbAvailable(true);
+        const all = await apiFetch<LinkedAsset[]>("/api/assets", { token });
+        setAllAssets(all);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 403) {
+          setCmdbAvailable(false);
+          return;
+        }
+        // Any other error (401 already handled by loadTicket's own call,
+        // which races this one) - just leave the panel hidden rather than
+        // surfacing a second error banner on top of the main ticket one.
+        setCmdbAvailable(false);
+      }
+    },
+    [ticketId],
+  );
+
   useEffect(() => {
     const auth = tenantAuth.get();
     if (!auth) {
@@ -86,7 +128,48 @@ export default function TicketDetailPage() {
     }
     setCurrentUserId(auth.userId);
     loadTicket(auth.accessToken);
-  }, [loadTicket, router]);
+    loadAssets(auth.accessToken);
+  }, [loadTicket, loadAssets, router]);
+
+  async function handleLinkAsset(e: React.FormEvent) {
+    e.preventDefault();
+    const auth = tenantAuth.get();
+    if (!auth || !selectedAssetId) return;
+
+    setAssetError(null);
+    setLinkingAsset(true);
+    try {
+      await apiFetch(`/api/assets/${selectedAssetId}/tickets`, {
+        method: "POST",
+        token: auth.accessToken,
+        body: JSON.stringify({ ticketId }),
+      });
+      await loadAssets(auth.accessToken);
+      setSelectedAssetId("");
+    } catch (err) {
+      setAssetError(err instanceof ApiError ? err.message : "Couldn't link asset.");
+    } finally {
+      setLinkingAsset(false);
+    }
+  }
+
+  async function handleUnlinkAsset(assetId: string) {
+    const auth = tenantAuth.get();
+    if (!auth) return;
+
+    setAssetError(null);
+    try {
+      await apiFetch(`/api/assets/${assetId}/tickets/${ticketId}`, {
+        method: "DELETE",
+        token: auth.accessToken,
+      });
+      await loadAssets(auth.accessToken);
+    } catch (err) {
+      setAssetError(err instanceof ApiError ? err.message : "Couldn't unlink asset.");
+    }
+  }
+
+  const linkableAssets = allAssets.filter((a) => !linkedAssets.some((l) => l.id === a.id));
 
   async function updateField(field: "status" | "priority", value: string) {
     const auth = tenantAuth.get();
@@ -263,6 +346,67 @@ export default function TicketDetailPage() {
                 Submitted through the customer portal — no rating yet
                 {["Resolved", "Closed"].includes(ticket.status) ? "" : " (ticket not yet resolved)"}.
               </p>
+            )}
+          </div>
+        )}
+
+        {cmdbAvailable && (
+          <div className="rounded-lg border border-zinc-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-zinc-900 mb-3">Linked assets</h2>
+
+            {linkedAssets.length === 0 ? (
+              <p className="text-sm text-zinc-500 mb-3">No assets linked to this ticket yet.</p>
+            ) : (
+              <div className="mb-3 space-y-2">
+                {linkedAssets.map((a) => (
+                  <div
+                    key={a.id}
+                    className="flex items-center justify-between rounded-md border border-zinc-100 px-3 py-2 text-sm"
+                  >
+                    <button
+                      onClick={() => router.push(`/dashboard/assets/${a.id}`)}
+                      className="font-medium text-zinc-900 hover:underline"
+                    >
+                      {a.name}
+                    </button>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-zinc-400">{a.type}</span>
+                      <button
+                        onClick={() => handleUnlinkAsset(a.id)}
+                        className="text-xs text-red-600 hover:underline"
+                      >
+                        Unlink
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {assetError && <p className="mb-2 text-sm text-red-600">{assetError}</p>}
+
+            {linkableAssets.length > 0 && (
+              <form onSubmit={handleLinkAsset} className="flex items-center gap-2">
+                <select
+                  value={selectedAssetId}
+                  onChange={(e) => setSelectedAssetId(e.target.value)}
+                  className="flex-1 rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+                >
+                  <option value="">Select an asset to link…</option>
+                  {linkableAssets.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({a.type})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="submit"
+                  disabled={linkingAsset || !selectedAssetId}
+                  className="rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  {linkingAsset ? "Linking…" : "Link"}
+                </button>
+              </form>
             )}
           </div>
         )}

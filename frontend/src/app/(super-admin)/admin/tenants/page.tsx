@@ -13,6 +13,7 @@ interface Tenant {
   status: string;
   createdAt: string;
   trialEndsAt: string | null;
+  cmdbEnabled: boolean;
 }
 
 interface Plan {
@@ -145,6 +146,25 @@ export default function SuperAdminTenantsPage() {
     }
   }
 
+  async function handleToggleCmdb(id: string, current: boolean) {
+    const auth = platformAuth.get();
+    if (!auth) return;
+    setBusyId(id);
+    setActionError(null);
+    try {
+      await apiFetch(`/api/platform/tenants/${id}/feature-flags`, {
+        method: "PATCH",
+        token: auth.accessToken,
+        body: JSON.stringify({ cmdbEnabled: !current }),
+      });
+      await loadTenants(auth.accessToken);
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Couldn't update feature flags.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const canManage = role !== null && MANAGE_ROLES.has(role);
 
   return (
@@ -268,6 +288,7 @@ export default function SuperAdminTenantsPage() {
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Trial ends</th>
                   <th className="px-4 py-3">Billing</th>
+                  <th className="px-4 py-3">CMDB</th>
                   {canManage && <th className="px-4 py-3">Actions</th>}
                 </tr>
               </thead>
@@ -295,6 +316,23 @@ export default function SuperAdminTenantsPage() {
                       >
                         View
                       </button>
+                    </td>
+                    <td className="px-4 py-3">
+                      {canManage ? (
+                        <button
+                          onClick={() => handleToggleCmdb(t.id, t.cmdbEnabled)}
+                          disabled={busyId === t.id}
+                          className={`rounded-md border px-2 py-1 text-xs disabled:opacity-50 ${
+                            t.cmdbEnabled
+                              ? "border-green-900 text-green-400 hover:bg-green-950"
+                              : "border-zinc-700 text-zinc-400 hover:bg-zinc-800"
+                          }`}
+                        >
+                          {t.cmdbEnabled ? "Enabled" : "Disabled"}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-zinc-400">{t.cmdbEnabled ? "Enabled" : "Disabled"}</span>
+                      )}
                     </td>
                     {canManage && (
                       <td className="px-4 py-3">

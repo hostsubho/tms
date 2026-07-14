@@ -110,5 +110,5 @@ public class TenantController : ControllerBase
 
     private static TenantSettingsResponse ToResponse(Models.Tenant t) => new(
         t.Id, t.Name, t.Subdomain, t.TimeZone, t.LogoUrl, t.PrimaryColor,
-        t.PlanId, t.Status.ToString(), t.TrialEndsAt);
+        t.PlanId, t.Status.ToString(), t.TrialEndsAt, t.CmdbEnabled);
 }

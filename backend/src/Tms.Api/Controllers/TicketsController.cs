@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Tms.Api.Data;
+using Tms.Api.Dtos.Assets;
 using Tms.Api.Dtos.Tickets;
 using Tms.Api.Extensions;
 using Tms.Api.Models;
@@ -301,5 +302,34 @@ public class TicketsController : ControllerBase
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GetComments), new { id }, CommentResponse.FromEntity(comment));
+    }
+
+    // Module 10 - Asset Management/CMDB: the reverse of
+    // AssetsController.GetAssetTickets, for the ticket detail page's "linked
+    // assets" panel. Gated by the same Tenant.CmdbEnabled flag - a tenant
+    // without CMDB turned on simply never has any TicketAssets rows to
+    // begin with, but this returns 403 rather than a silently-empty list so
+    // the frontend can distinguish "no assets linked yet" from "this
+    // workspace doesn't have CMDB."
+    [HttpGet("{id:guid}/assets")]
+    public async Task<ActionResult<IEnumerable<LinkedAssetSummary>>> GetLinkedAssets(Guid id, CancellationToken ct)
+    {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+
+        var tenant = await _db.Tenants.FirstOrDefaultAsync(t => t.Id == tenantId, ct);
+        if (tenant is not { CmdbEnabled: true })
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new { message = "Asset Management (CMDB) isn't enabled for this workspace yet - contact WMX to turn it on." });
+        }
+
+        var ticketExists = await _db.Tickets.AnyAsync(t => t.Id == id, ct);
+        if (!ticketExists) return NotFound();
+
+        var assetIds = await _db.TicketAssets.Where(l => l.TicketId == id).Select(l => l.AssetId).ToListAsync(ct);
+        var assets = await _db.Assets.Where(a => assetIds.Contains(a.Id)).OrderBy(a => a.Name).ToListAsync(ct);
+
+        return Ok(assets.Select(a => new LinkedAssetSummary(a.Id, a.Name, a.Type.ToString(), a.Status.ToString())));
     }
 }
