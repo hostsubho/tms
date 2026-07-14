@@ -106,7 +106,14 @@ export default function NotificationBell({ token, basePath, ticketLinkPrefix, on
   return (
     <div className="relative" ref={containerRef}>
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => !v);
+          // Refresh on open rather than waiting for the 30s poll - a user
+          // clicking the bell right after triggering an event (e.g.
+          // creating a ticket) expects to see it immediately, not on the
+          // next timer tick.
+          load();
+        }}
         className="relative rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
         aria-label="Notifications"
       >
