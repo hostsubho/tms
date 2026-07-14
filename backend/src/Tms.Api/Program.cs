@@ -44,6 +44,12 @@ builder.Services.AddHttpClient<IWebhookService, WebhookService>(client =>
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 
+// Module 5.2 - Plans & Billing Administration. Scoped (not singleton) since
+// it reads IConfiguration per-call rather than caching the secret key at
+// construction - matches the read-lazily-not-at-startup reasoning on
+// StripeService itself.
+builder.Services.AddScoped<IStripeService, StripeService>();
+
 builder.Services.AddDbContext<TmsDbContext>(options =>
     options.UseNpgsql(connectionString));
 
@@ -133,6 +139,16 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("PublicApi", policy =>
         policy.AddAuthenticationSchemes("ApiKey")
               .RequireClaim("scope", "public_api"));
+
+    // Module 5.2 - Plans & Billing Administration. Spec section 5.6: "Billing
+    // Admin (billing only, no impersonation)" - so BillingAdmin joins
+    // Owner/PlatformAdmin for billing mutations (credits, plan overrides),
+    // narrower than PlatformManage (which BillingAdmin does NOT satisfy -
+    // tenant create/suspend/reactivate stays Owner/PlatformAdmin only) and
+    // broader than the plain PlatformAdmin policy (any role, read-only).
+    options.AddPolicy("PlatformBilling", policy =>
+        policy.RequireClaim("scope", "platform_admin")
+              .RequireClaim("platform_role", nameof(PlatformRole.Owner), nameof(PlatformRole.PlatformAdmin), nameof(PlatformRole.BillingAdmin)));
 });
 
 builder.Services.AddCors(options =>

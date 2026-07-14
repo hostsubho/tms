@@ -193,6 +193,17 @@ export default function TenantDashboardPage() {
               Integrations
             </button>
           )}
+          {/* Module 5.2: the page itself allows any staff to view (backend's
+              TenantStaff policy), but changing plan/managing billing is
+              Admin-only - same nav gating convention as Roles/Integrations. */}
+          {role === "Admin" && (
+            <button
+              onClick={() => router.push("/dashboard/billing")}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+            >
+              Billing
+            </button>
+          )}
           <button
             onClick={() => setShowCreate((v) => !v)}
             className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800"

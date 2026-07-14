@@ -168,6 +168,19 @@ export default function SuperAdminTenantsPage() {
               {showCreate ? "Cancel" : "New tenant"}
             </button>
           )}
+          {/* Module 5.2 - Plans & Billing Administration */}
+          <button
+            onClick={() => router.push("/admin/plans")}
+            className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-900"
+          >
+            Plans
+          </button>
+          <button
+            onClick={() => router.push("/admin/revenue")}
+            className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-900"
+          >
+            Revenue
+          </button>
           <button
             onClick={handleLogout}
             className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-900"
@@ -254,6 +267,7 @@ export default function SuperAdminTenantsPage() {
                   <th className="px-4 py-3">Subdomain</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Trial ends</th>
+                  <th className="px-4 py-3">Billing</th>
                   {canManage && <th className="px-4 py-3">Actions</th>}
                 </tr>
               </thead>
@@ -273,6 +287,14 @@ export default function SuperAdminTenantsPage() {
                     </td>
                     <td className="px-4 py-3 text-zinc-400">
                       {t.trialEndsAt ? new Date(t.trialEndsAt).toLocaleDateString() : "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => router.push(`/admin/billing/${t.id}`)}
+                        className="rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-800"
+                      >
+                        View
+                      </button>
                     </td>
                     {canManage && (
                       <td className="px-4 py-3">

@@ -78,6 +78,9 @@ Module 12 (Roles & Permissions, custom roles) adds `CustomRoles`, `CustomRolePer
 Module 11 (Integrations & Public API) adds `ApiKeys`, `WebhookSubscriptions`, and `WebhookDeliveryLogs`:
 `dotnet ef migrations add AddIntegrationsApiKeysAndWebhooks --output-dir Migrations && dotnet ef database update`
 
+Module 5.2 (Plans & Billing Administration) adds `StripeCustomerId`/`StripeSubscriptionId`/`CurrentPeriodEnd`/`ChurnedAt` to `Tenants`, `StripePriceId` to `Plans`, and two new tables (`Invoices`, `BillingCredits`):
+`dotnet ef migrations add AddBillingAndPlans --output-dir Migrations && dotnet ef database update`
+
 Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
 required FK and there's no admin UI for creating plans yet:
 `psql "<connection string>" -f docs/seed-plans.sql`
@@ -87,6 +90,48 @@ Super Admin API (sales-assisted, see below) instead of hand-editing the
 database. `docs/seed-dev-tenant.sql` is still there for a quick throwaway
 test tenant (`acme`) if you just want to poke at `/api/auth/register` without
 going through either onboarding flow.
+
+## Billing (Stripe) setup — Module 5.2
+
+Real billing is wired to Stripe, but the app runs fine with zero Stripe
+configuration until a billing endpoint is actually hit (`Stripe:SecretKey`/
+`Stripe:WebhookSecret` are read lazily per-call, not at startup). To make
+plan upgrades/downgrades and invoices actually work end-to-end:
+
+1. Create a **test-mode** Stripe account (or use an existing one's test
+   mode — never wire test/dev environments to Stripe live keys).
+2. In the Stripe Dashboard, create one Product + Price per paid `Plan` you
+   want tenants to be able to subscribe to (e.g. "Starter" → $29/mo
+   recurring). Copy each Price's ID (`price_...`).
+3. Set your local secrets (same `dotnet user-secrets` mechanism as
+   `Auth:SigningKey` above):
+   ```
+   dotnet user-secrets set "Stripe:SecretKey" "sk_test_..."
+   dotnet user-secrets set "Stripe:WebhookSecret" "whsec_..."
+   ```
+4. Wire each paid `Plan`'s Stripe Price ID via the Super Admin API (or the
+   Plans page in the Super Admin console, `/admin/plans`):
+   `PATCH /api/platform/plans/{id}` with `{ "stripePriceId": "price_..." }`.
+   A plan with no `StripePriceId` set can still be a tenant's free/default
+   plan, but `POST /api/billing/change-plan` will reject moving a tenant
+   onto it until it's wired up.
+5. Register a webhook endpoint in the Stripe Dashboard pointing at
+   `<your API base URL>/api/webhooks/stripe`, subscribed to at least
+   `checkout.session.completed`, `invoice.paid`, `invoice.payment_failed`,
+   and `customer.subscription.deleted` (the events `StripeWebhookController`
+   actually acts on — anything else is acknowledged and ignored). Stripe
+   gives you that specific endpoint's signing secret — that's the value for
+   `Stripe:WebhookSecret`, not your account-wide one.
+6. Use Stripe's test card numbers (e.g. `4242 4242 4242 4242`, any future
+   expiry/CVC) to actually walk a tenant through Checkout in the tenant
+   dashboard's Billing page, and the Stripe CLI (`stripe trigger
+   invoice.payment_failed` etc.) to simulate dunning without waiting for a
+   real billing cycle.
+
+In production (Render), set `Stripe__SecretKey` and `Stripe__WebhookSecret`
+as environment variables the same way `ConnectionStrings__TmsDb` is set
+(double-underscore is ASP.NET Core's env-var equivalent of the `:` in
+`user-secrets`/`appsettings.json` keys) — see Deploy below.
 
 ## Run it
 
@@ -102,12 +147,34 @@ Swagger UI is available at `/swagger` in Development.
 - `POST /signup` — `{ companyName, subdomain, planId, adminEmail, adminPassword, timeZone? }`. Creates the tenant **and** its first Admin user in one call, returns tokens immediately (same shape as `/api/auth/register`/`login`) — this is the "signup to working workspace in one request" flow. Distinct from `/api/platform/tenants` (sales-assisted/manual provisioning by a Super Admin).
 
 **Plans** (`/api/plans`) — public, no auth
-- `GET /` — list of plans (id, name, limits, price) for the signup wizard to show. Seed data via `docs/seed-plans.sql`; no write endpoint yet.
+- `GET /` — list of plans (id, name, limits, price) for the signup wizard and the tenant Billing page's upgrade picker to show. Deliberately omits `StripePriceId` — see Platform Plans below for the Super-Admin-only equivalent that includes it. Seed data via `docs/seed-plans.sql`; no public write endpoint (see Platform Plans for that).
 
 **Tenant Settings** (`/api/tenant`) — requires a tenant AppUser token
 - `GET /me` — the caller's own tenant (name, subdomain, timezone, branding, plan, status, trial end). Any authenticated tenant user.
 - `PATCH /me` — update name/timezone/branding. `Admin` only.
-- `POST /me/plan` — `{ planId }`, the upgrade/downgrade flow. `Admin` only.
+- `POST /me/plan` — `{ planId }`. `Admin` only. As of Module 5.2, **only switches to a genuinely free plan** (`PriceMonthly <= 0`) — this predates real billing and originally moved a tenant onto any plan with no charge involved either way, which would now be a billing bypass onto a paid tier. Moving to or between paid plans must go through `POST /api/billing/change-plan` instead, which actually charges via Stripe. If the tenant already has a live Stripe subscription and downgrades here to free, that subscription is cancelled first so Stripe stops billing for a plan the app no longer grants.
+
+**Billing** (`/api/billing`) — Module 5.2 (Plans & Billing Administration, tenant-facing), requires a tenant AppUser token
+- `GET /subscription` — current plan, price, status, current period end, whether a Stripe customer exists yet. Any tenant staff.
+- `GET /invoices` — most recent 100 invoices for this tenant, newest period first. Any tenant staff.
+- `POST /change-plan` — `{ planId, successUrl, cancelUrl }`. `Admin` only. Three outcomes depending on state: (1) target is a free plan → cancels any existing Stripe subscription and switches immediately, no charge; (2) target is paid and the tenant already has a live subscription → updates that subscription's price directly (no new Checkout — the card on file is reused), plan switches immediately; (3) target is paid and this is the tenant's first-ever paid subscription → creates a Stripe Customer if needed and returns `{ requiresRedirect: true, redirectUrl }` pointing at a Stripe Checkout Session. The plan is **not** changed locally until `checkout.session.completed` arrives via webhook — an abandoned Checkout session must not grant paid access. A `Plan` with no `StripePriceId` configured 400s here (see Billing setup above).
+- `POST /portal-session` — `{ returnUrl }`. `Admin` only. Returns a Stripe Billing Portal URL (update card, view/download invoices, cancel) for a tenant that already has a Stripe customer; 400 if it doesn't yet.
+- Both mutating actions catch `Stripe.StripeException` (card declines, bad/expired keys, Stripe outages) and surface Stripe's own error message via a 502 instead of a bare 500.
+
+**Stripe Webhook** (`/api/webhooks/stripe`) — Module 5.2, `[AllowAnonymous]`, no JWT/API-key auth of any kind
+- Stripe itself is the only caller; the `Stripe-Signature` header verified against `Stripe:WebhookSecret` is the entire trust boundary (`IStripeService.ConstructWebhookEvent`) — an unverifiable payload is rejected with 400 before anything touches the database.
+- Handles `checkout.session.completed` (activates the tenant, resolves the actual `Plan` from the Price being billed), `invoice.paid`/`invoice.payment_failed` (upserts an `Invoice` row and flips tenant `Status` Active/PastDue — only the invoice event with the latest Stripe-side `created` timestamp is trusted to move tenant state, since Stripe's webhook delivery is at-least-once and **not** guaranteed in order), and `customer.subscription.deleted` (marks the tenant `Churned`, clears its Stripe subscription so a later resubscribe isn't blocked, and ignores a late/redelivered event for a subscription the tenant has already replaced). Any other event type is acknowledged (200) and ignored — Stripe retries on non-2xx.
+- There is no background worker in this deployment, so a failed payment marks a tenant `PastDue` immediately with no automatic grace-period sweep; it clears only when a later `invoice.paid` arrives (retry succeeds) or a Super Admin intervenes.
+
+**Platform Plans** (`/api/platform/plans`) — Module 5.2, Super Admin, requires a platform token
+- `GET /` — every plan including `StripePriceId` (the public `/api/plans` omits it). Any platform role.
+- `POST /`, `PATCH /{id}` — `Owner`/`PlatformAdmin` only (`PlatformManage` policy — pricing decisions, not day-to-day billing ops). `PATCH` is used to wire a plan's `StripePriceId` after creating the matching Product/Price in Stripe (see Billing setup above); an empty string clears it back to unconfigured, `null`/omitted leaves it untouched.
+
+**Platform Billing** (`/api/platform/billing`) — Module 5.2, Super Admin, requires a platform token
+- `GET /tenants/{tenantId}` — one tenant's billing overview (plan, status, Stripe customer state, invoices, credit history). Any platform role (`PlatformAdmin` policy).
+- `POST /tenants/{tenantId}/credit` — `{ amountCents, reason }`. Requires the `PlatformBilling` policy (`Owner`/`PlatformAdmin`/`BillingAdmin` — narrower than `PlatformAdmin`, matches the spec's "Billing Admin: billing only, no impersonation"). Applies a negative balance transaction in Stripe (capped at $50,000/credit as a fat-finger guardrail) and records a `BillingCredit` row; requires an existing Stripe customer. Every credit is written to the tenant's own audit trail (`AuditEntityType.Billing`), same as override-plan below — these are the two most sensitive real-money actions a Super Admin can take.
+- `POST /tenants/{tenantId}/override-plan` — `{ planId }`. `PlatformBilling` policy. Sets the tenant's plan directly with **no Stripe call at all** — for a negotiated/comped deal, works even for a tenant with no Stripe customer. Also audit-logged.
+- `GET /revenue` — MRR/ARR and per-plan distribution, counting only tenants that are `Active` **and** have a live Stripe subscription (a Trial tenant or one manually plan-overridden onto a paid tier doesn't count as recurring revenue), plus new/churned tenant counts over the last 30 days. Computed on request, not pre-aggregated — same lazy-evaluation convention as Module 9's Reports; would need real rollup tables before this scales to thousands of tenants.
 
 **Auth** (`/api/auth`) — Module 1
 - `POST /register` — `{ tenantSlug, email, password }`. First user for a tenant becomes `Admin`, others default to `Agent`.
@@ -269,3 +336,12 @@ on push to `main`. Requires `AZURE_WEBAPP_PUBLISH_PROFILE` repo secret, plus
 `ConnectionStrings__TmsDb` and `Auth__SigningKey` set in the App Service's
 own configuration (Azure Portal → Configuration → Application settings) —
 never in source control.
+
+In practice this deployment currently runs on Render instead — same idea,
+set `Stripe__SecretKey` and `Stripe__WebhookSecret` (in addition to the
+existing `ConnectionStrings__TmsDb`/`Auth__SigningKey`) in the Render Web
+Service's Environment tab. Until those two are set, every non-billing
+endpoint keeps working normally; only `/api/billing/*` and
+`/api/webhooks/stripe` will fail (with a clear "Stripe:SecretKey not
+configured" error, not a silent misbehavior) — see Billing (Stripe) setup
+above for how to get real test-mode values.

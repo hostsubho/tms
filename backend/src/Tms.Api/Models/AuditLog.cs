@@ -29,6 +29,8 @@ public enum AuditEntityType
     // a new enum value" reasoning as above.
     ApiKey,
     WebhookSubscription,
+    // Module 5.2 - Plans & Billing Administration. Same reasoning again.
+    Billing,
 }
 
 // Immutable, append-only - there is deliberately no update/delete endpoint

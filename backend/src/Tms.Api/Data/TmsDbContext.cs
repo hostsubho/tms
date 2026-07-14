@@ -39,6 +39,8 @@ public class TmsDbContext : DbContext
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
     public DbSet<WebhookSubscription> WebhookSubscriptions => Set<WebhookSubscription>();
     public DbSet<WebhookDeliveryLog> WebhookDeliveryLogs => Set<WebhookDeliveryLog>();
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<BillingCredit> BillingCredits => Set<BillingCredit>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -217,6 +219,26 @@ public class TmsDbContext : DbContext
             .HasQueryFilter(l => l.TenantId == _tenantContext.TenantId);
         modelBuilder.Entity<WebhookDeliveryLog>()
             .Property(l => l.Event).HasConversion<string>();
+
+        // Module 5.2 - Plans & Billing Administration. StripeInvoiceId is
+        // looked up by StripeWebhookController before any tenant context
+        // exists (there's no JWT on an inbound Stripe webhook call) - same
+        // reasoning as ApiKey.KeyHash's unique index, and that controller
+        // uses IgnoreQueryFilters() for the same reason RefreshToken/ApiKey
+        // lookups do pre-tenant-context.
+        modelBuilder.Entity<Invoice>()
+            .HasIndex(i => i.StripeInvoiceId).IsUnique();
+        modelBuilder.Entity<Invoice>()
+            .HasIndex(i => new { i.TenantId, i.PeriodStart });
+        modelBuilder.Entity<Invoice>()
+            .HasQueryFilter(i => i.TenantId == _tenantContext.TenantId);
+        modelBuilder.Entity<Invoice>()
+            .Property(i => i.Status).HasConversion<string>();
+
+        modelBuilder.Entity<BillingCredit>()
+            .HasIndex(c => new { c.TenantId, c.CreatedAt });
+        modelBuilder.Entity<BillingCredit>()
+            .HasQueryFilter(c => c.TenantId == _tenantContext.TenantId);
 
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.
