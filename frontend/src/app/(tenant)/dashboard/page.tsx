@@ -45,6 +45,7 @@ export default function TenantDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const [role, setRole] = useState<string | null>(null);
 
   const [showCreate, setShowCreate] = useState(false);
   const [subject, setSubject] = useState("");
@@ -62,6 +63,7 @@ export default function TenantDashboardPage() {
     }
     setEmail(auth.email);
     setToken(auth.accessToken);
+    setRole(auth.role);
 
     apiFetch<Ticket[]>("/api/tickets", { token: auth.accessToken })
       .then(setTickets)
@@ -161,6 +163,14 @@ export default function TenantDashboardPage() {
           >
             SLA Policies
           </button>
+          {(role === "Admin" || role === "Manager") && (
+            <button
+              onClick={() => router.push("/dashboard/audit-log")}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+            >
+              Audit Log
+            </button>
+          )}
           <button
             onClick={() => setShowCreate((v) => !v)}
             className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800"
