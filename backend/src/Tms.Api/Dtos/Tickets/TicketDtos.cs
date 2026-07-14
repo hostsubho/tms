@@ -42,7 +42,8 @@ public record TicketResponse(
     bool IsResolutionBreached,
     bool IsResponseBreached,
     int? CsatRating,
-    DateTime? CsatSubmittedAt)
+    DateTime? CsatSubmittedAt,
+    DateTime? ResolvedAt)
 {
     // utcNow threaded through explicitly (rather than each call re-reading
     // DateTime.UtcNow) so a whole ticket list evaluates breach status against
@@ -53,7 +54,7 @@ public record TicketResponse(
         t.ResponseDueAt, t.FirstRespondedAt, t.Escalated,
         SlaEvaluator.IsResolutionBreached(t, utcNow),
         SlaEvaluator.IsResponseBreached(t, utcNow),
-        t.CsatRating, t.CsatSubmittedAt);
+        t.CsatRating, t.CsatSubmittedAt, t.ResolvedAt);
 }
 
 public record AddCommentRequest(string Body, bool IsInternal);

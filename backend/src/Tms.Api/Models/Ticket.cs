@@ -47,4 +47,11 @@ public class Ticket
     // (lazily, on read) - prevents re-escalating priority over and over on
     // every subsequent view of an already-escalated ticket.
     public bool Escalated { get; set; }
+
+    // Module 9 - Reporting & Analytics. Set by TicketsController the moment
+    // Status transitions into Resolved/Closed, cleared if it's ever moved
+    // back out of that state (reopened) - so resolution-time metrics always
+    // reflect the ticket's *current* resolved period, not a stale timestamp
+    // from a previous resolve/reopen cycle.
+    public DateTime? ResolvedAt { get; set; }
 }

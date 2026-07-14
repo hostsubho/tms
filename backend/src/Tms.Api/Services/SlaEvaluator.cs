@@ -62,8 +62,19 @@ public static class SlaEvaluator
     // Historical fact, not mutated state - a resolved ticket that blew its
     // resolution target is still reported as having breached, even though
     // there's nothing left to escalate.
-    public static bool IsResolutionBreached(Ticket ticket, DateTime utcNow) =>
-        ticket.DueAt is not null && utcNow > ticket.DueAt.Value;
+    //
+    // For a resolved/closed ticket, breach is judged against ResolvedAt, not
+    // utcNow - otherwise a ticket resolved well within its target would flip
+    // to "breached" the moment someone views it after the due date has since
+    // passed, purely because time kept moving after the ticket was already
+    // done. An open ticket has no ResolvedAt yet, so it still falls back to
+    // "is the deadline already behind us right now".
+    public static bool IsResolutionBreached(Ticket ticket, DateTime utcNow)
+    {
+        if (ticket.DueAt is null) return false;
+        var comparisonPoint = ticket.ResolvedAt ?? utcNow;
+        return comparisonPoint > ticket.DueAt.Value;
+    }
 
     public static bool IsResponseBreached(Ticket ticket, DateTime utcNow)
     {

@@ -160,7 +160,25 @@ public class TicketsController : ControllerBase
 
         if (request.Subject is not null) ticket.Subject = request.Subject;
         if (request.Description is not null) ticket.Description = request.Description;
-        if (request.Status is not null) ticket.Status = request.Status.Value;
+        if (request.Status is not null)
+        {
+            ticket.Status = request.Status.Value;
+
+            // Module 9 - Reporting & Analytics: stamp/clear ResolvedAt on the
+            // same transition rather than in a separate pass, so it can never
+            // drift out of sync with Status. Reopening a ticket (moving back
+            // to New/Open/Pending) clears it - resolution-time metrics should
+            // reflect the ticket's current resolve, not a stale one from
+            // before it was reopened.
+            if (ticket.Status is TicketStatus.Resolved or TicketStatus.Closed)
+            {
+                ticket.ResolvedAt ??= DateTime.UtcNow;
+            }
+            else
+            {
+                ticket.ResolvedAt = null;
+            }
+        }
         if (request.Priority is not null) ticket.Priority = request.Priority.Value;
         if (request.CategoryId is not null) ticket.CategoryId = request.CategoryId;
         if (request.AssigneeId is not null) ticket.AssigneeId = request.AssigneeId;
