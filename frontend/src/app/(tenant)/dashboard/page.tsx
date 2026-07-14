@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/api";
 import { tenantAuth } from "@/lib/auth";
+import NotificationBell from "@/components/NotificationBell";
 
 interface Ticket {
   id: string;
@@ -43,6 +44,7 @@ export default function TenantDashboardPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
 
   const [showCreate, setShowCreate] = useState(false);
   const [subject, setSubject] = useState("");
@@ -59,6 +61,7 @@ export default function TenantDashboardPage() {
       return;
     }
     setEmail(auth.email);
+    setToken(auth.accessToken);
 
     apiFetch<Ticket[]>("/api/tickets", { token: auth.accessToken })
       .then(setTickets)
@@ -123,6 +126,17 @@ export default function TenantDashboardPage() {
           {email && <p className="text-sm text-zinc-500">Signed in as {email}</p>}
         </div>
         <div className="flex items-center gap-2">
+          {token && (
+            <NotificationBell
+              token={token}
+              basePath="/api/notifications"
+              ticketLinkPrefix="/dashboard/tickets"
+              onAuthError={() => {
+                tenantAuth.clear();
+                router.replace("/login");
+              }}
+            />
+          )}
           <button
             onClick={() => router.push("/dashboard/sla-policies")}
             className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"

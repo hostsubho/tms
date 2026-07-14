@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/api";
 import { portalAuth } from "@/lib/auth";
+import NotificationBell from "@/components/NotificationBell";
 
 interface PortalTicket {
   id: string;
@@ -30,6 +31,7 @@ export default function PortalTicketsPage() {
   const [tickets, setTickets] = useState<PortalTicket[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
 
   const [showCreate, setShowCreate] = useState(false);
   const [subject, setSubject] = useState("");
@@ -45,6 +47,7 @@ export default function PortalTicketsPage() {
       return;
     }
     setName(auth.name);
+    setToken(auth.accessToken);
 
     apiFetch<PortalTicket[]>("/api/portal/tickets", { token: auth.accessToken })
       .then(setTickets)
@@ -96,6 +99,17 @@ export default function PortalTicketsPage() {
           {name && <p className="text-sm text-zinc-500">Signed in as {name}</p>}
         </div>
         <div className="flex items-center gap-2">
+          {token && (
+            <NotificationBell
+              token={token}
+              basePath="/api/portal/notifications"
+              ticketLinkPrefix="/portal/tickets"
+              onAuthError={() => {
+                portalAuth.clear();
+                router.replace("/portal/login");
+              }}
+            />
+          )}
           <button
             onClick={() => setShowCreate((v) => !v)}
             className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800"

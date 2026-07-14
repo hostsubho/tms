@@ -16,11 +16,13 @@ public class TicketsController : ControllerBase
 {
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
+    private readonly INotificationService _notifications;
 
-    public TicketsController(TmsDbContext db, ITenantContext tenantContext)
+    public TicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications)
     {
         _db = db;
         _tenantContext = tenantContext;
+        _notifications = notifications;
     }
 
     [HttpGet]
@@ -29,6 +31,9 @@ public class TicketsController : ControllerBase
         [FromQuery] Guid? assigneeId,
         CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+
         // TenantId filter is applied automatically via the DbContext global query filter.
         var query = _db.Tickets.AsQueryable();
         if (status is not null) query = query.Where(t => t.Status == status);
@@ -40,12 +45,12 @@ public class TicketsController : ControllerBase
             .ToListAsync(ct);
 
         var utcNow = DateTime.UtcNow;
-        var escalatedAny = false;
+        var changed = false;
         foreach (var ticket in tickets)
         {
-            if (SlaEvaluator.CheckAndEscalate(ticket, utcNow)) escalatedAny = true;
+            if (await CheckAndNotifyBreachAsync(ticket, tenantId, utcNow, ct)) changed = true;
         }
-        if (escalatedAny) await _db.SaveChangesAsync(ct);
+        if (changed) await _db.SaveChangesAsync(ct);
 
         return Ok(tickets.Select(t => TicketResponse.FromEntity(t, utcNow)));
     }
@@ -53,6 +58,9 @@ public class TicketsController : ControllerBase
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<TicketResponse>> GetTicket(Guid id, CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+
         var ticket = await _db.Tickets.FirstOrDefaultAsync(t => t.Id == id, ct);
         if (ticket is null) return NotFound();
 
@@ -63,9 +71,30 @@ public class TicketsController : ControllerBase
         // enough for the spec's "shows on the SLA dashboard before and after
         // breach" bar; a real cron-based sweep would catch breaches even for
         // tickets nobody happens to look at.
-        if (SlaEvaluator.CheckAndEscalate(ticket, utcNow)) await _db.SaveChangesAsync(ct);
+        if (await CheckAndNotifyBreachAsync(ticket, tenantId, utcNow, ct)) await _db.SaveChangesAsync(ct);
 
         return Ok(TicketResponse.FromEntity(ticket, utcNow));
+    }
+
+    // Module 8 - Notifications: wraps SlaEvaluator.CheckAndEscalate so a
+    // breach that just got caught (lazily, on this very read) also notifies
+    // someone - the assignee if the ticket has one, otherwise every Admin,
+    // same fallback used for a brand new unassigned ticket.
+    private async Task<bool> CheckAndNotifyBreachAsync(Ticket ticket, Guid tenantId, DateTime utcNow, CancellationToken ct)
+    {
+        if (!SlaEvaluator.CheckAndEscalate(ticket, utcNow)) return false;
+
+        var message = $"Ticket '{ticket.Subject}' breached its SLA and was escalated to {ticket.Priority}.";
+        if (ticket.AssigneeId is not null)
+        {
+            await _notifications.NotifyUserAsync(tenantId, ticket.AssigneeId.Value, NotificationType.SlaBreach, message, ticket.Id, ct);
+        }
+        else
+        {
+            await _notifications.NotifyAdminsAsync(tenantId, NotificationType.SlaBreach, message, ticket.Id, ct);
+        }
+
+        return true;
     }
 
     [HttpPost]
@@ -98,6 +127,21 @@ public class TicketsController : ControllerBase
         SlaEvaluator.ApplyPolicyToNewTicket(ticket, matchedPolicy);
 
         _db.Tickets.Add(ticket);
+
+        // Module 8 - Notifications: a brand new ticket needs someone to
+        // triage it. If it was created pre-assigned, tell that assignee
+        // directly; otherwise every Admin gets a heads-up.
+        if (ticket.AssigneeId is not null)
+        {
+            await _notifications.NotifyUserAsync(tenantId, ticket.AssigneeId.Value, NotificationType.TicketAssigned,
+                $"You were assigned '{ticket.Subject}'.", ticket.Id, ct);
+        }
+        else
+        {
+            await _notifications.NotifyAdminsAsync(tenantId, NotificationType.NewTicket,
+                $"New ticket needs triage: '{ticket.Subject}'.", ticket.Id, ct);
+        }
+
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GetTicket), new { id = ticket.Id }, TicketResponse.FromEntity(ticket, utcNow));
@@ -106,8 +150,13 @@ public class TicketsController : ControllerBase
     [HttpPatch("{id:guid}")]
     public async Task<ActionResult<TicketResponse>> UpdateTicket(Guid id, [FromBody] UpdateTicketRequest request, CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
+
         var ticket = await _db.Tickets.FirstOrDefaultAsync(t => t.Id == id, ct);
         if (ticket is null) return NotFound();
+
+        var previousAssigneeId = ticket.AssigneeId;
 
         if (request.Subject is not null) ticket.Subject = request.Subject;
         if (request.Description is not null) ticket.Description = request.Description;
@@ -115,6 +164,15 @@ public class TicketsController : ControllerBase
         if (request.Priority is not null) ticket.Priority = request.Priority.Value;
         if (request.CategoryId is not null) ticket.CategoryId = request.CategoryId;
         if (request.AssigneeId is not null) ticket.AssigneeId = request.AssigneeId;
+
+        // Module 8 - Notifications: only fire when the assignee actually
+        // changed to someone new - not on every PATCH that happens to
+        // re-send the same AssigneeId alongside an unrelated status change.
+        if (request.AssigneeId is not null && request.AssigneeId != previousAssigneeId)
+        {
+            await _notifications.NotifyUserAsync(tenantId, request.AssigneeId.Value, NotificationType.TicketAssigned,
+                $"You were assigned '{ticket.Subject}'.", ticket.Id, ct);
+        }
 
         await _db.SaveChangesAsync(ct);
         var utcNow = DateTime.UtcNow;
@@ -163,6 +221,16 @@ public class TicketsController : ControllerBase
         if (ticket.FirstRespondedAt is null)
         {
             ticket.FirstRespondedAt = utcNow;
+        }
+
+        // Module 8 - Notifications: this is the staff surface, so every
+        // comment posted here is from an agent - if the ticket has a portal
+        // customer attached, let them know a reply is waiting (unless it's
+        // an internal note, which they were never going to see anyway).
+        if (ticket.CustomerId is not null && !comment.IsInternal)
+        {
+            await _notifications.NotifyCustomerAsync(tenantId, ticket.CustomerId.Value, NotificationType.NewComment,
+                $"You have a new reply on '{ticket.Subject}'.", ticket.Id, ct);
         }
 
         await _db.SaveChangesAsync(ct);

@@ -17,4 +17,7 @@ public class PortalCustomer
     public string PasswordHash { get; set; } = string.Empty;
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    // Module 8 - Notifications. Same single on/off switch as AppUser.
+    public bool NotificationsEnabled { get; set; } = true;
 }

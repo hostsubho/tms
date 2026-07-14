@@ -21,16 +21,20 @@ public class PortalTicketsController : ControllerBase
 {
     private readonly TmsDbContext _db;
     private readonly ITenantContext _tenantContext;
+    private readonly INotificationService _notifications;
 
-    public PortalTicketsController(TmsDbContext db, ITenantContext tenantContext)
+    public PortalTicketsController(TmsDbContext db, ITenantContext tenantContext, INotificationService notifications)
     {
         _db = db;
         _tenantContext = tenantContext;
+        _notifications = notifications;
     }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<PortalTicketResponse>>> GetMyTickets(CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
         var customerId = User.GetCustomerId();
 
         var tickets = await _db.Tickets
@@ -40,12 +44,12 @@ public class PortalTicketsController : ControllerBase
             .ToListAsync(ct);
 
         var utcNow = DateTime.UtcNow;
-        var escalatedAny = false;
+        var changed = false;
         foreach (var ticket in tickets)
         {
-            if (SlaEvaluator.CheckAndEscalate(ticket, utcNow)) escalatedAny = true;
+            if (await CheckAndNotifyBreachAsync(ticket, tenantId, utcNow, ct)) changed = true;
         }
-        if (escalatedAny) await _db.SaveChangesAsync(ct);
+        if (changed) await _db.SaveChangesAsync(ct);
 
         return Ok(tickets.Select(PortalTicketResponse.FromEntity));
     }
@@ -53,14 +57,36 @@ public class PortalTicketsController : ControllerBase
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<PortalTicketResponse>> GetMyTicket(Guid id, CancellationToken ct)
     {
+        var tenantId = _tenantContext.TenantId
+            ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
         var customerId = User.GetCustomerId();
         var ticket = await _db.Tickets.FirstOrDefaultAsync(t => t.Id == id && t.CustomerId == customerId, ct);
         if (ticket is null) return NotFound();
 
         var utcNow = DateTime.UtcNow;
-        if (SlaEvaluator.CheckAndEscalate(ticket, utcNow)) await _db.SaveChangesAsync(ct);
+        if (await CheckAndNotifyBreachAsync(ticket, tenantId, utcNow, ct)) await _db.SaveChangesAsync(ct);
 
         return Ok(PortalTicketResponse.FromEntity(ticket));
+    }
+
+    // Module 8 - Notifications: same wrapper as TicketsController's, kept as
+    // a separate copy rather than a shared static helper since it depends on
+    // the injected INotificationService instance.
+    private async Task<bool> CheckAndNotifyBreachAsync(Ticket ticket, Guid tenantId, DateTime utcNow, CancellationToken ct)
+    {
+        if (!SlaEvaluator.CheckAndEscalate(ticket, utcNow)) return false;
+
+        var message = $"Ticket '{ticket.Subject}' breached its SLA and was escalated to {ticket.Priority}.";
+        if (ticket.AssigneeId is not null)
+        {
+            await _notifications.NotifyUserAsync(tenantId, ticket.AssigneeId.Value, NotificationType.SlaBreach, message, ticket.Id, ct);
+        }
+        else
+        {
+            await _notifications.NotifyAdminsAsync(tenantId, NotificationType.SlaBreach, message, ticket.Id, ct);
+        }
+
+        return true;
     }
 
     [HttpPost]
@@ -90,6 +116,13 @@ public class PortalTicketsController : ControllerBase
         SlaEvaluator.ApplyPolicyToNewTicket(ticket, matchedPolicy);
 
         _db.Tickets.Add(ticket);
+
+        // Module 8 - Notifications: a customer-submitted ticket has no
+        // assignee yet by definition (portal customers can't set one), so
+        // every Admin gets notified to triage it.
+        await _notifications.NotifyAdminsAsync(tenantId, NotificationType.NewTicket,
+            $"New ticket from the customer portal: '{ticket.Subject}'.", ticket.Id, ct);
+
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GetMyTicket), new { id = ticket.Id }, PortalTicketResponse.FromEntity(ticket));
@@ -140,6 +173,18 @@ public class PortalTicketsController : ControllerBase
         // SLA measures how fast staff reply to the customer, not the
         // customer's own messages. Only TicketsController.AddComment (the
         // staff surface) advances it.
+
+        // Module 8 - Notifications: tell the assignee a customer replied.
+        // If nobody's assigned yet, this reply just sits in the queue same
+        // as it always did - there's no "notify all agents" fallback here,
+        // unlike NewTicket/SlaBreach, since a reply on an unassigned ticket
+        // isn't a new event for the whole team the way a fresh ticket is.
+        if (ticket.AssigneeId is not null)
+        {
+            await _notifications.NotifyUserAsync(tenantId, ticket.AssigneeId.Value, NotificationType.NewComment,
+                $"New customer reply on '{ticket.Subject}'.", ticket.Id, ct);
+        }
+
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GetComments), new { id }, PortalCommentResponse.FromEntity(comment));

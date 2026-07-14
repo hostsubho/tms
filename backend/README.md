@@ -56,6 +56,10 @@ Module 7 (Customer/End-User Portal) adds a new `PortalCustomers` table,
 to `TicketComments`:
 `dotnet ef migrations add AddCustomerPortal --output-dir Migrations && dotnet ef database update`
 
+Module 8 (Notifications) adds a new `Notifications` table and
+`NotificationsEnabled` to both `Users` and `PortalCustomers`:
+`dotnet ef migrations add AddNotifications --output-dir Migrations && dotnet ef database update`
+
 Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
 required FK and there's no admin UI for creating plans yet:
 `psql "<connection string>" -f docs/seed-plans.sql`
@@ -125,6 +129,13 @@ Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bea
 - `POST /` — `{ subject, description, priority }`. `customerId`/`tenantId` always set server-side; SLA policy matching works identically to the staff `POST /api/tickets`.
 - `GET /{id}/comments`, `POST /{id}/comments` — `{ body }` only; `isInternal` is always `false` and can't be set by the customer, and `GET` never returns internal notes even if requested directly.
 - `POST /{id}/csat` — `{ rating: 1-5 }`. Only allowed once the ticket is `Resolved`/`Closed`, and only once per ticket (409 on a second attempt).
+
+**Notifications** (`/api/notifications`) — Module 8, requires auth · **Portal Notifications** (`/api/portal/notifications`) — same shape, requires a portal customer token
+- In-app only for this iteration — no email/SMS/push provider is configured, and there's no background worker/queue in this deployment (same constraint that keeps SLA breach detection lazy-on-read rather than a cron sweep). Notifications are written synchronously, in the same DB transaction as the event that triggered them.
+- `GET /` — the caller's own notifications (most recent 50), newest first.
+- `POST /{id}/read` — mark one as read. `POST /read-all` — mark every unread one as read.
+- `GET /preferences`, `PATCH /preferences` — `{ enabled }`. A single on/off switch per user/customer, not per-event-type — there's only one channel (in-app) to toggle in this iteration, so per-channel granularity would be UI for controls that don't do anything yet. Disabling means `NotificationService` skips writing new notifications for that recipient entirely; it doesn't hide existing ones.
+- Trigger points: ticket created (notifies the assignee if pre-assigned, otherwise every `Admin`), ticket assigned/reassigned via `PATCH /api/tickets/{id}` (notifies the new assignee, only when the assignee actually changed), a staff reply on a ticket with a portal customer attached (notifies that customer, skipped for internal notes), a customer reply on an assigned ticket (notifies the assignee), and an SLA breach caught lazily on read (notifies the assignee, or every `Admin` if unassigned).
 
 **Platform Auth** (`/api/platform/auth`) — Module 5, Super Admin console
 - `POST /bootstrap` — `{ name, email, password }`. Only works once, while `PlatformUsers` is empty; creates the first `Owner`. 409 after that.

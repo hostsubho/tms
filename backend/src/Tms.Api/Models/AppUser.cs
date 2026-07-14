@@ -22,4 +22,10 @@ public class AppUser
     public Role Role { get; set; } = Role.Agent;
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    // Module 8 - Notifications. A single on/off switch rather than
+    // per-event-type channel toggles - there's only one channel (in-app) in
+    // this iteration, so per-channel granularity would be UI for controls
+    // that don't do anything yet.
+    public bool NotificationsEnabled { get; set; } = true;
 }

@@ -28,6 +28,7 @@ public class TmsDbContext : DbContext
     public DbSet<PlatformUser> PlatformUsers => Set<PlatformUser>();
     public DbSet<Plan> Plans => Set<Plan>();
     public DbSet<PortalCustomer> PortalCustomers => Set<PortalCustomer>();
+    public DbSet<Notification> Notifications => Set<Notification>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -92,6 +93,18 @@ public class TmsDbContext : DbContext
             .HasIndex(c => new { c.TenantId, c.Email }).IsUnique();
         modelBuilder.Entity<PortalCustomer>()
             .HasQueryFilter(c => c.TenantId == _tenantContext.TenantId);
+
+        // Module 8 - Notifications. Indexed for the two "my notifications"
+        // list queries (staff and portal), each filtering to their own
+        // recipient column plus unread state.
+        modelBuilder.Entity<Notification>()
+            .HasIndex(n => new { n.TenantId, n.RecipientUserId, n.IsRead });
+        modelBuilder.Entity<Notification>()
+            .HasIndex(n => new { n.TenantId, n.RecipientCustomerId, n.IsRead });
+        modelBuilder.Entity<Notification>()
+            .HasQueryFilter(n => n.TenantId == _tenantContext.TenantId);
+        modelBuilder.Entity<Notification>()
+            .Property(n => n.Type).HasConversion<string>();
 
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.
