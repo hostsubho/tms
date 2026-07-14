@@ -87,6 +87,9 @@ Module 10 (Asset Management/CMDB) adds `CmdbEnabled` to `Tenants` and two new ta
 Module 5.1 (Tenant impersonation) adds one new table (`ImpersonationLogs`) - no changes to any existing table:
 `dotnet ef migrations add AddImpersonationLogs --output-dir Migrations && dotnet ef database update`
 
+Module 1 (SSO completion) adds two new tables (`SsoConfigs`, `SsoLoginStates`) - no changes to any existing table:
+`dotnet ef migrations add AddSso --output-dir Migrations && dotnet ef database update`
+
 Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
 required FK and there's no admin UI for creating plans yet:
 `psql "<connection string>" -f docs/seed-plans.sql`
@@ -190,6 +193,17 @@ Swagger UI is available at `/swagger` in Development.
 
 All return `{ accessToken, accessTokenExpiresAtUtc, refreshToken, userId, email, role }`.
 Access tokens are short-lived JWTs (15 min default); send as `Authorization: Bearer <token>`.
+
+**SSO config** (`/api/tenant/sso`) — Module 1 (SSO completion), requires the `TenantStaff` policy **and** the `Admin` role
+- `GET /` — the tenant's current SSO config (or a stable empty shape with `isConfigured: false` if none exists yet), plus the computed `spEntityId`/`oidcRedirectUri`/`samlAcsUrl` values to paste into the IdP's app registration. Secrets (`OidcClientSecret`, `SamlIdpCertificate`) are never echoed back — only `hasOidcClientSecret`/`hasSamlIdpCertificate` booleans.
+- `PUT /` — `{ protocol, enabled, oidcAuthority?, oidcClientId?, oidcClientSecret?, samlIdpEntityId?, samlIdpSsoUrl?, samlIdpCertificate? }`. Upserts the tenant's single config row. A blank/omitted secret or certificate leaves whatever's already stored untouched, so editing other fields doesn't force re-pasting them. Audit-logged (`AuditEntityType.SsoConfig`).
+
+**SSO login** (`/api/auth/sso`) — Module 1 (SSO completion), unauthenticated (this *is* the login flow)
+- `GET /{tenantSlug}/start` — resolves the tenant's SSO config, mints a short-lived, single-use `SsoLoginState` token (anti-CSRF/anti-replay, 10 min expiry), and redirects the browser to the IdP: the OIDC authorization endpoint (fetched fresh from `{authority}/.well-known/openid-configuration` on every login) or the SAML IdP SSO URL (HTTP-Redirect binding, deflate+base64-encoded `AuthnRequest`).
+- `GET /oidc/callback` — exchanges the authorization code for an `id_token` at the IdP's token endpoint, validates its signature against the IdP's live JWKS plus issuer/audience/expiry (`Services/OidcService.cs`, driven manually via `System.IdentityModel.Tokens.Jwt`/`Microsoft.IdentityModel.Tokens` rather than the ASP.NET Core OIDC middleware, which assumes one fixed IdP at startup — this app resolves a different IdP per tenant at request time).
+- `POST /saml/acs` — the SAML Assertion Consumer Service. Verifies the `SAMLResponse`'s XML-DSig signature against the tenant's configured IdP certificate (`Services/SamlHelper.cs`, built on `System.Security.Cryptography.Xml.SignedXml`, the same verifier ASP.NET Core's own auth handlers use internally) and reads the `NameID` only from the specific signed element, guarding against XML "wrapping" attacks.
+- Both callbacks JIT-provision an `AppUser` matched by `(TenantId, Email)` — a first-time email creates a new `Agent`-role account (same default a second/later tenant signup gets); an existing local-password account is "claimed" by backfilling its `SsoSubjectId` the first time it signs in via SSO. On success, redirects to the frontend's `/sso/callback#access_token=...&refresh_token=...&...` (tokens in the URL **fragment**, never a query string, so they never hit server access logs or `Referer` headers) — same token shape as `POST /api/auth/login`, plus `tenant_slug`, since the SSO redirect flow has no client-side form state to source it from the way a password login does.
+- **Known limitations** (see `Services/SamlHelper.cs`'s own doc comment): `AuthnRequest`s aren't signed, encrypted assertions aren't supported, and audience/`InResponseTo` correlation isn't checked (the `SsoLoginState` token already covers replay/CSRF at the transport level). This is a baseline SP built entirely on .NET's own XML-DSig verifier rather than a third-party SAML package — get a second pair of eyes on it, or swap in a mature library, before relying on it for a real enterprise customer's compliance requirements.
 
 **Tickets** (`/api/tickets`) — Module 3, requires auth
 - `GET /` — filterable by `status`, `assigneeId`. Response includes SLA fields (see Module 4 below); reading the list lazily checks every ticket for a new SLA breach and escalates it if so, persisting the change.
@@ -364,3 +378,9 @@ endpoint keeps working normally; only `/api/billing/*` and
 `/api/webhooks/stripe` will fail (with a clear "Stripe:SecretKey not
 configured" error, not a silent misbehavior) — see Billing (Stripe) setup
 above for how to get real test-mode values.
+
+Module 1 (SSO completion) reads `Auth:BackendBaseUrl` (env var
+`Auth__BackendBaseUrl`) to build the fixed OIDC redirect URI / SAML ACS URL
+every tenant's IdP app registration points at (see `SsoConfigController`/
+`SsoAuthController`). Defaults to `https://tms-1tv2.onrender.com` if unset —
+only needs setting explicitly if this API's own base URL ever changes.

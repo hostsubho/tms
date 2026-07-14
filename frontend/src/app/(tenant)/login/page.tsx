@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiFetch, ApiError } from "@/lib/api";
+import { apiFetch, ApiError, API_BASE_URL } from "@/lib/api";
 import { tenantAuth, type TenantAuth } from "@/lib/auth";
 
 export default function LoginPage() {
@@ -12,6 +12,19 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Module 1 - SSO. A full browser navigation, not a fetch - the backend
+  // redirects straight to the IdP from here, and eventually back to
+  // /sso/callback with tokens in the URL fragment. Requires the workspace
+  // slug up front (same as a password login) since that's how the backend
+  // resolves which tenant's SSO config to use.
+  function handleSsoLogin() {
+    if (!tenantSlug) {
+      setError("Enter your workspace first.");
+      return;
+    }
+    window.location.href = `${API_BASE_URL}/api/auth/sso/${encodeURIComponent(tenantSlug)}/start`;
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -80,6 +93,20 @@ export default function LoginPage() {
             {loading ? "Signing in…" : "Sign in"}
           </button>
         </form>
+
+        <div className="mt-4 flex items-center gap-3">
+          <div className="h-px flex-1 bg-zinc-200" />
+          <span className="text-xs text-zinc-400">or</span>
+          <div className="h-px flex-1 bg-zinc-200" />
+        </div>
+
+        <button
+          type="button"
+          onClick={handleSsoLogin}
+          className="mt-4 w-full rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+        >
+          Sign in with SSO
+        </button>
 
         <p className="mt-6 text-center text-sm text-zinc-500">
           New company?{" "}

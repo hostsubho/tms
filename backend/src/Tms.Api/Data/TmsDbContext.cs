@@ -44,6 +44,8 @@ public class TmsDbContext : DbContext
     public DbSet<Asset> Assets => Set<Asset>();
     public DbSet<TicketAsset> TicketAssets => Set<TicketAsset>();
     public DbSet<ImpersonationLog> ImpersonationLogs => Set<ImpersonationLog>();
+    public DbSet<TenantSsoConfig> SsoConfigs => Set<TenantSsoConfig>();
+    public DbSet<SsoLoginState> SsoLoginStates => Set<SsoLoginState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -275,6 +277,28 @@ public class TmsDbContext : DbContext
         // StartedAt for the "most recent first" platform-wide list.
         modelBuilder.Entity<ImpersonationLog>()
             .HasIndex(l => l.StartedAt);
+
+        // Module 1 - Authentication & Identity (SSO). One config row per
+        // tenant - looked up after SsoConfigController/SsoAuthController.Start
+        // resolve the tenant (by JWT claim or by tenantSlug respectively),
+        // same as every other tenant-scoped table here.
+        modelBuilder.Entity<TenantSsoConfig>()
+            .HasIndex(c => c.TenantId).IsUnique();
+        modelBuilder.Entity<TenantSsoConfig>()
+            .HasQueryFilter(c => c.TenantId == _tenantContext.TenantId);
+        modelBuilder.Entity<TenantSsoConfig>()
+            .Property(c => c.Protocol).HasConversion<string>();
+
+        // The callback/ACS endpoint looks this up by TokenHash before the
+        // tenant is known (that's the whole point of the state token) - same
+        // pre-tenant-context IgnoreQueryFilters() pattern as RefreshToken/
+        // ApiKey, so it needs its own unique index independent of TenantId.
+        modelBuilder.Entity<SsoLoginState>()
+            .HasIndex(s => s.TokenHash).IsUnique();
+        modelBuilder.Entity<SsoLoginState>()
+            .HasQueryFilter(s => s.TenantId == _tenantContext.TenantId);
+        modelBuilder.Entity<SsoLoginState>()
+            .Property(s => s.Protocol).HasConversion<string>();
 
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.

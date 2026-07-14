@@ -18,6 +18,16 @@
     <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="8.0.10" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="7.6.2" />
     <PackageReference Include="Stripe.net" Version="47.4.0" />
+    <!-- Module 1 - Authentication & Identity (SSO). SignedXml/XML-DSig
+         verification for the SAML 2.0 ACS endpoint (see Services/SamlHelper.cs) -
+         not part of the ASP.NET Core shared framework by default on .NET 8,
+         needs this explicit package reference. 8.0.3 specifically (not
+         8.0.0-8.0.2) since those earlier 8.0.x releases carry a since-patched
+         DoS vulnerability (CVE-2026-33116) - verified via NuGet search, not
+         guessed, since this sandbox has no dotnet SDK to resolve/build
+         locally and this is exactly the kind of transitive detail worth
+         getting right on the first Render deploy rather than iterating. -->
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="8.0.3" />
   </ItemGroup>
 
 </Project>

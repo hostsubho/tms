@@ -44,6 +44,18 @@ builder.Services.AddHttpClient<IWebhookService, WebhookService>(client =>
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 
+// Module 1 - Authentication & Identity (SSO). Discovery document, token
+// endpoint, and JWKS fetches all happen synchronously inline in the OIDC
+// login flow (SsoAuthController.Start/OidcCallback) - a slow/unreachable IdP
+// adds directly to that request's latency, same tradeoff already accepted
+// for outbound webhooks above. A tighter timeout than webhooks' 10s since
+// this sits in the middle of an interactive browser redirect a user is
+// actively waiting on, not a fire-and-forget background notification.
+builder.Services.AddHttpClient<IOidcService, OidcService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(8);
+});
+
 // Module 5.2 - Plans & Billing Administration. Scoped (not singleton) since
 // it reads IConfiguration per-call rather than caching the secret key at
 // construction - matches the read-lazily-not-at-startup reasoning on

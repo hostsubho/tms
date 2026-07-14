@@ -203,6 +203,17 @@ export default function TenantDashboardPage() {
               Integrations
             </button>
           )}
+          {/* Module 1 - SSO: configuring an IdP is a live credential granting
+              sign-in access to the whole workspace - Admin-only, same
+              reasoning as Roles/Integrations above. */}
+          {role === "Admin" && (
+            <button
+              onClick={() => router.push("/dashboard/sso")}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100"
+            >
+              SSO
+            </button>
+          )}
           {/* Module 5.2: the page itself allows any staff to view (backend's
               TenantStaff policy), but changing plan/managing billing is
               Admin-only - same nav gating convention as Roles/Integrations. */}

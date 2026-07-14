@@ -35,6 +35,8 @@ public enum AuditEntityType
     Asset,
     // Module 5.1 - Tenant impersonation. Same reasoning again.
     Impersonation,
+    // Module 1 - Authentication & Identity (SSO). Same reasoning again.
+    SsoConfig,
 }
 
 // Immutable, append-only - there is deliberately no update/delete endpoint
