@@ -41,6 +41,16 @@ public class TmsDbContext : DbContext
         modelBuilder.Entity<AppUser>()
             .Property(u => u.Role)
             .HasConversion<string>();
+        // Module 8 - Notifications. The C# `= true` initializer only applies
+        // to objects constructed in code - it has no effect on the SQL
+        // column default EF generates, which otherwise falls back to the
+        // CLR default (false for bool). Without this, the migration that
+        // added this column would default every *existing* row to false,
+        // silently opting every current user out. HasDefaultValue makes the
+        // SQL-level default match the C# one.
+        modelBuilder.Entity<AppUser>()
+            .Property(u => u.NotificationsEnabled)
+            .HasDefaultValue(true);
 
         modelBuilder.Entity<Ticket>()
             .HasIndex(t => new { t.TenantId, t.Status });
@@ -93,6 +103,9 @@ public class TmsDbContext : DbContext
             .HasIndex(c => new { c.TenantId, c.Email }).IsUnique();
         modelBuilder.Entity<PortalCustomer>()
             .HasQueryFilter(c => c.TenantId == _tenantContext.TenantId);
+        modelBuilder.Entity<PortalCustomer>()
+            .Property(c => c.NotificationsEnabled)
+            .HasDefaultValue(true);
 
         // Module 8 - Notifications. Indexed for the two "my notifications"
         // list queries (staff and portal), each filtering to their own
