@@ -22,10 +22,25 @@ public static class ClaimsPrincipalExtensions
     // to a generic label rather than throwing - an audit entry missing a
     // precise actor is still far more useful than a request failing outright
     // over a cosmetic display detail.
-    public static string GetEmail(this ClaimsPrincipal user) =>
-        user.FindFirst(JwtRegisteredClaimNames.Email)?.Value
-        ?? user.FindFirst(ClaimTypes.Email)?.Value
-        ?? "unknown user";
+    public static string GetEmail(this ClaimsPrincipal user)
+    {
+        var email = user.FindFirst(JwtRegisteredClaimNames.Email)?.Value
+            ?? user.FindFirst(ClaimTypes.Email)?.Value
+            ?? "unknown user";
+
+        // Module 5.1 - Tenant impersonation. An impersonation token's Email
+        // claim is the *impersonated* tenant user's own address (see
+        // JwtTokenService.CreateAccessToken) - the token otherwise behaves
+        // exactly like that user's own login. The "imp" claim, when
+        // present, carries the Super Admin's email who's actually driving
+        // the session. Surfacing both here (rather than just the tenant
+        // user's email) means every existing audit-log call site across the
+        // app - which all call this method, never read the Email claim
+        // directly - automatically attributes impersonated actions to the
+        // real actor, with no per-controller changes needed.
+        var impersonator = user.FindFirst("imp")?.Value;
+        return impersonator is not null ? $"{impersonator} (impersonating {email})" : email;
+    }
 
     // Portal customer tokens set "sub" to the PortalCustomer's own Id too
     // (see JwtTokenService.CreatePortalCustomerAccessToken), plus a dedicated

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/api";
-import { platformAuth } from "@/lib/auth";
+import { impersonationBanner, platformAuth, tenantAuth } from "@/lib/auth";
 
 interface Tenant {
   id: string;
@@ -35,6 +35,12 @@ const STATUS_STYLES: Record<string, string> = {
 // still view via PlatformAdmin policy, so hide mutation controls for them
 // rather than showing actions that will 403.
 const MANAGE_ROLES = new Set(["Owner", "PlatformAdmin"]);
+
+// Module 5.1 - Tenant impersonation. Matches the backend's
+// PlatformImpersonate policy (Owner/PlatformAdmin/SupportEngineer) - spec
+// 5.6's "Support Engineer (impersonation + read)"; BillingAdmin and
+// ReadOnlyAnalyst don't get this button since the backend would 403 them.
+const IMPERSONATE_ROLES = new Set(["Owner", "PlatformAdmin", "SupportEngineer"]);
 
 export default function SuperAdminTenantsPage() {
   const router = useRouter();
@@ -165,7 +171,59 @@ export default function SuperAdminTenantsPage() {
     }
   }
 
+  async function handleImpersonate(t: Tenant) {
+    const auth = platformAuth.get();
+    if (!auth) return;
+    setBusyId(t.id);
+    setActionError(null);
+    try {
+      const result = await apiFetch<{
+        accessToken: string;
+        accessTokenExpiresAtUtc: string;
+        tenantId: string;
+        tenantName: string;
+        tenantSlug: string;
+        userId: string;
+        email: string;
+        role: string;
+        permissions: string[];
+      }>(`/api/platform/tenants/${t.id}/impersonate`, {
+        method: "POST",
+        token: auth.accessToken,
+        body: JSON.stringify({}),
+      });
+
+      // Stored in the same slot a real tenant login uses (see auth.ts) so
+      // every existing tenant-side page works unchanged - no refreshToken
+      // is issued for an impersonation session (see backend), stored as ""
+      // rather than making the field optional everywhere it's read.
+      tenantAuth.save({
+        accessToken: result.accessToken,
+        accessTokenExpiresAtUtc: result.accessTokenExpiresAtUtc,
+        refreshToken: "",
+        userId: result.userId,
+        email: result.email,
+        role: result.role,
+        tenantSlug: result.tenantSlug,
+        permissions: result.permissions,
+      });
+      impersonationBanner.save({
+        tenantName: result.tenantName,
+        targetEmail: result.email,
+        platformAdminEmail: auth.email,
+        startedAt: new Date().toISOString(),
+      });
+
+      router.push("/dashboard");
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Couldn't start impersonation.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const canManage = role !== null && MANAGE_ROLES.has(role);
+  const canImpersonate = role !== null && IMPERSONATE_ROLES.has(role);
 
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -188,6 +246,13 @@ export default function SuperAdminTenantsPage() {
               {showCreate ? "Cancel" : "New tenant"}
             </button>
           )}
+          {/* Module 5.1 - Tenant impersonation */}
+          <button
+            onClick={() => router.push("/admin/impersonation-logs")}
+            className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-900"
+          >
+            Impersonation log
+          </button>
           {/* Module 5.2 - Plans & Billing Administration */}
           <button
             onClick={() => router.push("/admin/plans")}
@@ -289,6 +354,7 @@ export default function SuperAdminTenantsPage() {
                   <th className="px-4 py-3">Trial ends</th>
                   <th className="px-4 py-3">Billing</th>
                   <th className="px-4 py-3">CMDB</th>
+                  {canImpersonate && <th className="px-4 py-3">Impersonate</th>}
                   {canManage && <th className="px-4 py-3">Actions</th>}
                 </tr>
               </thead>
@@ -334,6 +400,17 @@ export default function SuperAdminTenantsPage() {
                         <span className="text-xs text-zinc-400">{t.cmdbEnabled ? "Enabled" : "Disabled"}</span>
                       )}
                     </td>
+                    {canImpersonate && (
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => handleImpersonate(t)}
+                          disabled={busyId === t.id}
+                          className="rounded-md border border-amber-700 px-2 py-1 text-xs text-amber-400 hover:bg-amber-950 disabled:opacity-50"
+                        >
+                          Impersonate
+                        </button>
+                      </td>
+                    )}
                     {canManage && (
                       <td className="px-4 py-3">
                         {t.status === "Suspended" || t.status === "PastDue" ? (

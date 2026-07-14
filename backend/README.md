@@ -84,6 +84,9 @@ Module 5.2 (Plans & Billing Administration) adds `StripeCustomerId`/`StripeSubsc
 Module 10 (Asset Management/CMDB) adds `CmdbEnabled` to `Tenants` and two new tables (`Assets`, `TicketAssets`):
 `dotnet ef migrations add AddAssetsAndCmdb --output-dir Migrations && dotnet ef database update`
 
+Module 5.1 (Tenant impersonation) adds one new table (`ImpersonationLogs`) - no changes to any existing table:
+`dotnet ef migrations add AddImpersonationLogs --output-dir Migrations && dotnet ef database update`
+
 Then seed the default plans (`docs/seed-plans.sql`) — `Tenant.PlanId` is a
 required FK and there's no admin UI for creating plans yet:
 `psql "<connection string>" -f docs/seed-plans.sql`
@@ -287,6 +290,9 @@ this iteration — re-login when the 15 min access token expires).
 - `POST /` — `{ name, subdomain, planId, trialDays? }`. `Owner`/`PlatformAdmin` only.
 - `POST /{id}/suspend`, `POST /{id}/reactivate` — `Owner`/`PlatformAdmin` only.
 - `PATCH /{id}/feature-flags` — `{ cmdbEnabled }`. `Owner`/`PlatformAdmin` only. Module 10's "tenant-level feature flag" — scoped to exactly the one flag that exists today rather than a generic name/value flag store (see `Tenant.CmdbEnabled`'s own code comment); shaped as an object so a future second flag slots into the same request/endpoint.
+- `POST /{id}/impersonate` — Module 5.1 (Tenant Lifecycle Management). `{ userId? }`. Requires the `PlatformImpersonate` policy (`Owner`/`PlatformAdmin`/`SupportEngineer` — spec 5.6's "Support Engineer: impersonation + read"; `BillingAdmin`/`ReadOnlyAnalyst` are excluded, matching "Billing Admin: billing only, no impersonation"). Omit `userId` to impersonate the tenant's own earliest-created **active** Admin (the common "debug this customer's issue" case); pass a specific `userId` to impersonate someone else on that tenant (must belong to that tenant and be active, or this 404s). Returns a completely normal tenant AppUser access token (same claims, same expiry, satisfies every existing `TenantStaff`/`Permission:X` check unchanged) plus one additive `imp` claim carrying the Super Admin's own email — every existing audit-log call site across the app already calls `User.GetEmail()`, which now surfaces `"{admin email} (impersonating {tenant user's email})"` when that claim is present, so impersonated actions are correctly attributed everywhere with no per-controller changes. No refresh token is issued (short-lived, one-off session by design, same tradeoff as Platform/Portal tokens). Deliberately **not** blocked for `Suspended`/`Churned` tenants (unlike a real login) — support needs to be able to help exactly those tenants; every session is still fully logged (see below), trading "can't touch a suspended tenant" for "fully accountable if you do."
+- Every impersonation session is recorded twice: an `ImpersonationLog` row (`PlatformUserEmail`, `TenantId`/`Name`, `TargetUserEmail`, `StartedAt` — a small, purpose-built platform-side table, not the full generic cross-tenant "Global audit log" the spec separately calls out under 5.4, which would also cover tenant-created/suspended/plan-changed events and is deferred as its own larger feature) and an entry in the tenant's own `AuditLog` (`AuditEntityType.Impersonation`) — satisfying the spec's "every impersonation session is logged and visible to the tenant's audit log too."
+- `GET /api/platform/impersonation-logs` — the 200 most recent impersonation events platform-wide, newest first. Open to any platform role (`PlatformAdmin` policy), same "reads are broader than the mutating action" convention as the rest of this controller.
 
 A platform token carries `scope=platform_admin` + `platform_role=<PlatformRole>`
 and never a `tenant_id` claim, so it can't be used against `/api/tickets` etc.,

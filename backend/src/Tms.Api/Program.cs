@@ -149,6 +149,15 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("PlatformBilling", policy =>
         policy.RequireClaim("scope", "platform_admin")
               .RequireClaim("platform_role", nameof(PlatformRole.Owner), nameof(PlatformRole.PlatformAdmin), nameof(PlatformRole.BillingAdmin)));
+
+    // Module 5.1 - Tenant impersonation. Spec section 5.6: "Support Engineer
+    // (impersonation + read)" - so SupportEngineer joins Owner/PlatformAdmin
+    // here, but BillingAdmin and ReadOnlyAnalyst do not (matching the spec's
+    // explicit "Billing Admin: billing only, no impersonation" and
+    // ReadOnlyAnalyst's read-only framing).
+    options.AddPolicy("PlatformImpersonate", policy =>
+        policy.RequireClaim("scope", "platform_admin")
+              .RequireClaim("platform_role", nameof(PlatformRole.Owner), nameof(PlatformRole.PlatformAdmin), nameof(PlatformRole.SupportEngineer)));
 });
 
 builder.Services.AddCors(options =>

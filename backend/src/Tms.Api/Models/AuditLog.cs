@@ -33,6 +33,8 @@ public enum AuditEntityType
     Billing,
     // Module 10 - Asset Management/CMDB. Same reasoning again.
     Asset,
+    // Module 5.1 - Tenant impersonation. Same reasoning again.
+    Impersonation,
 }
 
 // Immutable, append-only - there is deliberately no update/delete endpoint

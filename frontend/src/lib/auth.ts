@@ -41,9 +41,24 @@ export interface PortalAuth {
   tenantSlug: string;
 }
 
+// Module 5.1 - Tenant impersonation. Not a fourth auth surface - the token
+// issued is stored in the same `tenantAuth` slot a real tenant login uses
+// (so every existing tenant-side page works completely unchanged). This is
+// purely a UI marker so the dashboard layout can show "you're impersonating
+// X" instead of silently pretending to be a normal session, plus an "End
+// impersonation" action. Cleared whenever tenantAuth itself is cleared
+// (logout/401), see clear() below.
+export interface ImpersonationBanner {
+  tenantName: string;
+  targetEmail: string;
+  platformAdminEmail: string;
+  startedAt: string;
+}
+
 const TENANT_KEY = "tms.tenantAuth";
 const PLATFORM_KEY = "tms.platformAuth";
 const PORTAL_KEY = "tms.portalAuth";
+const IMPERSONATION_KEY = "tms.impersonationBanner";
 
 function readJson<T>(key: string): T | null {
   if (typeof window === "undefined") return null;
@@ -68,8 +83,33 @@ function clearKey(key: string) {
 
 export const tenantAuth = {
   get: () => readJson<TenantAuth>(TENANT_KEY),
-  save: (auth: TenantAuth) => writeJson(TENANT_KEY, auth),
-  clear: () => clearKey(TENANT_KEY),
+  // Clears any impersonation banner on every save, not just clear() - a
+  // real tenant login/signup (login/page.tsx, signup/page.tsx) also calls
+  // save() directly and has no reason to know about impersonation, but if
+  // a stale banner from an earlier impersonation session were left behind
+  // in localStorage, DashboardLayout would show "Impersonating X" over a
+  // completely unrelated real session, and "End impersonation" would then
+  // discard that real session instead of an impersonation one.
+  // handleImpersonate (admin/tenants/page.tsx) calls impersonationBanner.save()
+  // immediately after this, so the ordering still ends up correct for an
+  // actual impersonation start.
+  save: (auth: TenantAuth) => {
+    writeJson(TENANT_KEY, auth);
+    clearKey(IMPERSONATION_KEY);
+  },
+  // Also clears any impersonation banner - a stale "you're impersonating
+  // X" banner must never survive past the session it describes (e.g. a
+  // 401 that clears tenantAuth and bounces to /login).
+  clear: () => {
+    clearKey(TENANT_KEY);
+    clearKey(IMPERSONATION_KEY);
+  },
+};
+
+export const impersonationBanner = {
+  get: () => readJson<ImpersonationBanner>(IMPERSONATION_KEY),
+  save: (banner: ImpersonationBanner) => writeJson(IMPERSONATION_KEY, banner),
+  clear: () => clearKey(IMPERSONATION_KEY),
 };
 
 export const platformAuth = {

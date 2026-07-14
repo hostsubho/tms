@@ -15,7 +15,7 @@ public class JwtTokenService : IJwtTokenService
         _config = config;
     }
 
-    public AccessTokenResult CreateAccessToken(AppUser user, IReadOnlyCollection<Permission>? permissions = null)
+    public AccessTokenResult CreateAccessToken(AppUser user, IReadOnlyCollection<Permission>? permissions = null, string? impersonatorEmail = null)
     {
         var claims = new List<Claim>
         {
@@ -36,6 +36,14 @@ public class JwtTokenService : IJwtTokenService
         if (permissions is { Count: > 0 })
         {
             claims.Add(new Claim("permissions", string.Join(',', permissions.Select(p => p.ToString()))));
+        }
+
+        // Module 5.1 - Tenant impersonation. See this method's doc comment
+        // on IJwtTokenService for why this is a plain extra claim rather
+        // than a different token shape.
+        if (impersonatorEmail is not null)
+        {
+            claims.Add(new Claim("imp", impersonatorEmail));
         }
 
         return BuildToken(claims.ToArray());

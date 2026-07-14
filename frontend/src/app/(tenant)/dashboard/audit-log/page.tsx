@@ -15,7 +15,20 @@ interface AuditLogEntry {
   timestamp: string;
 }
 
-const ENTITY_TYPES = ["Ticket", "Category", "SlaPolicy", "AutomationRule", "KnowledgeArticle", "CustomRole", "User"];
+const ENTITY_TYPES = [
+  "Ticket",
+  "Category",
+  "SlaPolicy",
+  "AutomationRule",
+  "KnowledgeArticle",
+  "CustomRole",
+  "User",
+  "ApiKey",
+  "WebhookSubscription",
+  "Billing",
+  "Asset",
+  "Impersonation",
+];
 const ACTIONS = ["Created", "Updated", "Deleted"];
 
 const ACTION_STYLES: Record<string, string> = {

@@ -43,6 +43,7 @@ public class TmsDbContext : DbContext
     public DbSet<BillingCredit> BillingCredits => Set<BillingCredit>();
     public DbSet<Asset> Assets => Set<Asset>();
     public DbSet<TicketAsset> TicketAssets => Set<TicketAsset>();
+    public DbSet<ImpersonationLog> ImpersonationLogs => Set<ImpersonationLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -266,6 +267,14 @@ public class TmsDbContext : DbContext
             .HasIndex(l => l.TicketId);
         modelBuilder.Entity<TicketAsset>()
             .HasQueryFilter(l => l.TenantId == _tenantContext.TenantId);
+
+        // Module 5.1 - Tenant impersonation. Platform-scoped, like
+        // PlatformUser - no TenantId query filter (only
+        // SuperAdminTenantsController ever touches this table, never
+        // through the tenant-scoped DbContext filter path). Indexed by
+        // StartedAt for the "most recent first" platform-wide list.
+        modelBuilder.Entity<ImpersonationLog>()
+            .HasIndex(l => l.StartedAt);
 
         // Tenants table itself is not filtered - only Super Admin endpoints query it,
         // and they must not go through the tenant-scoped DbContext filter.
