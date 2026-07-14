@@ -138,12 +138,18 @@ export default function IntegrationsPage() {
     setWebhookError(null);
     setCreatingWebhook(true);
     try {
-      const created = await apiFetch<Webhook & { secret: string }>("/api/webhooks", {
+      // The POST response (CreatedWebhookResponse on the backend) carries
+      // the one-time secret but deliberately omits isActive - it's always
+      // true for a webhook that was just created (see
+      // WebhooksController.CreateWebhook), so it's filled in here rather
+      // than trusted from the response shape.
+      const created = await apiFetch<Omit<Webhook, "isActive"> & { secret: string }>("/api/webhooks", {
         method: "POST",
         token: auth.accessToken,
         body: JSON.stringify({ url: newWebhookUrl, event: newWebhookEvent }),
       });
-      setWebhooks((prev) => (prev ? [created, ...prev] : [created]));
+      const newWebhook: Webhook = { ...created, isActive: true };
+      setWebhooks((prev) => (prev ? [newWebhook, ...prev] : [newWebhook]));
       setJustCreatedSecret(created.secret);
       setNewWebhookUrl("");
     } catch (err) {
