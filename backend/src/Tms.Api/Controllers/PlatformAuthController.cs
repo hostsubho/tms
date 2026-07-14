@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -31,9 +32,9 @@ public class PlatformAuthController : ControllerBase
     }
 
     // Only usable while the PlatformUsers table is empty - creates the very
-    // first Owner. Returns 409 once any platform user exists. There is
-    // deliberately no general-purpose "create platform user" endpoint yet;
-    // adding more admins after bootstrap needs a follow-up (Module 5.6).
+    // first Owner. Returns 409 once any platform user exists. Every
+    // PlatformUser after this one goes through AddPlatformUser below
+    // (Module 5.6), which requires an existing Owner's token.
     [HttpPost("bootstrap")]
     public async Task<ActionResult<PlatformAuthResponse>> Bootstrap([FromBody] BootstrapRequest request, CancellationToken ct)
     {
@@ -77,5 +78,35 @@ public class PlatformAuthController : ControllerBase
 
         var token = _tokenService.CreatePlatformAccessToken(user);
         return new PlatformAuthResponse(token.Token, token.ExpiresAtUtc, user.Id, user.Email, user.Role.ToString());
+    }
+
+    // Module 5.6 - the follow-up bootstrap's own comment pointed at: adding
+    // platform users (any role, including a second Owner) once at least one
+    // already exists. Owner-only (see "PlatformOwnerOnly" policy) - a
+    // PlatformAdmin must not be able to create its own peers or a new Owner.
+    [HttpPost("admins")]
+    [Authorize(Policy = "PlatformOwnerOnly")]
+    public async Task<ActionResult<PlatformUserResponse>> AddPlatformUser([FromBody] AddPlatformUserRequest request, CancellationToken ct)
+    {
+        var emailTaken = await _db.PlatformUsers.AnyAsync(u => u.Email == request.Email, ct);
+        if (emailTaken)
+        {
+            return Conflict(new { message = "A platform user with that email already exists." });
+        }
+
+        var user = new PlatformUser
+        {
+            Id = Guid.NewGuid(),
+            Name = request.Name,
+            Email = request.Email,
+            Role = request.Role,
+            CreatedAt = DateTime.UtcNow,
+        };
+        user.PasswordHash = _passwordHasher.HashPassword(user, request.Password);
+
+        _db.PlatformUsers.Add(user);
+        await _db.SaveChangesAsync(ct);
+
+        return new PlatformUserResponse(user.Id, user.Name, user.Email, user.Role.ToString(), user.IsActive, user.CreatedAt);
     }
 }

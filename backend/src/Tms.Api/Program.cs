@@ -98,6 +98,15 @@ builder.Services.AddAuthorization(options =>
         policy.RequireClaim("scope", "platform_admin")
               .RequireClaim("platform_role", nameof(PlatformRole.Owner), nameof(PlatformRole.PlatformAdmin)));
 
+    // Module 5.6 - Adding platform users (including additional Owners) is
+    // Owner-only, stricter than PlatformManage (which also lets a
+    // PlatformAdmin through) - granting platform access is a step above
+    // ordinary tenant management and PlatformAdmin must not be able to
+    // mint its own peers or a new Owner.
+    options.AddPolicy("PlatformOwnerOnly", policy =>
+        policy.RequireClaim("scope", "platform_admin")
+              .RequireClaim("platform_role", nameof(PlatformRole.Owner)));
+
     // Module 7 - Customer/End-User Portal. A portal customer's token carries
     // scope=portal_customer and nothing else that would satisfy the policies
     // above or a staff [Authorize(Roles = ...)] check - see JwtTokenService.
