@@ -26,6 +26,7 @@ export default function SlaPoliciesPage() {
   const [policies, setPolicies] = useState<SlaPolicy[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
 
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
@@ -42,6 +43,7 @@ export default function SlaPoliciesPage() {
       return;
     }
     setRole(auth.role);
+    setPermissions(auth.permissions);
 
     apiFetch<SlaPolicy[]>("/api/sla-policies", { token: auth.accessToken })
       .then(setPolicies)
@@ -55,7 +57,7 @@ export default function SlaPoliciesPage() {
       });
   }, [router]);
 
-  const canManage = role === "Admin" || role === "Manager";
+  const canManage = role === "Admin" || role === "Manager" || permissions.includes("ManageSlaPolicies");
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();

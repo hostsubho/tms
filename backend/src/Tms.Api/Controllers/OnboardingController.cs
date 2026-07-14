@@ -97,7 +97,8 @@ public class OnboardingController : ControllerBase
             refreshTokenPlaintext,
             admin.Id,
             admin.Email,
-            admin.Role.ToString());
+            admin.Role.ToString(),
+            new List<string>());
 
         // Plain 201 with no Location header - there's no "get my signup by id"
         // route to point at, unlike a typical CreatedAtAction resource.

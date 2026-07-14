@@ -30,6 +30,7 @@ export default function KnowledgeBasePage() {
   const [articles, setArticles] = useState<Article[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
 
   const [showCreate, setShowCreate] = useState(false);
   const [title, setTitle] = useState("");
@@ -49,6 +50,7 @@ export default function KnowledgeBasePage() {
       return;
     }
     setRole(auth.role);
+    setPermissions(auth.permissions);
 
     apiFetch<Article[]>("/api/knowledge-articles", { token: auth.accessToken })
       .then(setArticles)
@@ -62,7 +64,7 @@ export default function KnowledgeBasePage() {
       });
   }, [router]);
 
-  const canManage = role === "Admin" || role === "Manager";
+  const canManage = role === "Admin" || role === "Manager" || permissions.includes("ManageKnowledgeArticles");
 
   function resetForm() {
     setTitle("");

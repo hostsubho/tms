@@ -107,6 +107,7 @@ export default function AutomationRulesPage() {
   const [users, setUsers] = useState<UserOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<string[]>([]);
 
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
@@ -125,6 +126,7 @@ export default function AutomationRulesPage() {
       return;
     }
     setRole(auth.role);
+    setPermissions(auth.permissions);
 
     Promise.all([
       apiFetch<AutomationRule[]>("/api/automation-rules", { token: auth.accessToken }),
@@ -148,7 +150,7 @@ export default function AutomationRulesPage() {
       });
   }, [router]);
 
-  const canManage = role === "Admin" || role === "Manager";
+  const canManage = role === "Admin" || role === "Manager" || permissions.includes("ManageAutomationRules");
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();

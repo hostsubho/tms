@@ -181,6 +181,7 @@ public class AuthController : ControllerBase
             refreshTokenPlaintext,
             user.Id,
             user.Email,
-            user.Role.ToString());
+            user.Role.ToString(),
+            permissions.Select(p => p.ToString()).ToList());
     }
 }

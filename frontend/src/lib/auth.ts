@@ -15,6 +15,11 @@ export interface TenantAuth {
   email: string;
   role: string;
   tenantSlug: string;
+  // Module 12 - Roles & Permissions. Granted by the user's assigned custom
+  // role, if any - always empty for Admin/Manager (they already have every
+  // permission implicitly; see PermissionAuthorizationHandler on the
+  // backend). Snapshotted at login/refresh, same staleness window as `role`.
+  permissions: string[];
 }
 
 export interface PlatformAuth {
