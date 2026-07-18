@@ -87,12 +87,17 @@ public class WebhooksController : ControllerBase
             new CreatedWebhookResponse(webhook.Id, webhook.Url, webhook.Event, secret, webhook.CreatedAt));
     }
 
+    // Deliberately NOT gated by IsEnabledAsync (unlike GetWebhooks/CreateWebhook/
+    // GetLogs above) - this only pauses/resumes an existing subscription, and
+    // delivery itself was never gated by the module flag to begin with
+    // (WebhookService fires regardless), so blocking pause here would remove
+    // exactly the "turn this off" lever an Admin needs most right when the
+    // module is disabled. Same safety-action carve-out as ApiKeysController.RevokeKey.
     [HttpPatch("{id:guid}")]
     public async Task<ActionResult<WebhookResponse>> UpdateWebhook(Guid id, [FromBody] UpdateWebhookRequest request, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
-        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.IntegrationsApi, ct)) return ModuleDisabled();
 
         var webhook = await _db.WebhookSubscriptions.FirstOrDefaultAsync(w => w.Id == id, ct);
         if (webhook is null) return NotFound();
@@ -111,12 +116,14 @@ public class WebhooksController : ControllerBase
         return Ok(WebhookResponse.FromEntity(webhook));
     }
 
+    // Deliberately NOT gated, same reasoning as UpdateWebhook above - deleting
+    // is the other "turn this off" safety lever and shouldn't lock up behind
+    // the very module flag an Admin might have just switched off.
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> DeleteWebhook(Guid id, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
-        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.IntegrationsApi, ct)) return ModuleDisabled();
 
         var webhook = await _db.WebhookSubscriptions.FirstOrDefaultAsync(w => w.Id == id, ct);
         if (webhook is null) return NotFound();

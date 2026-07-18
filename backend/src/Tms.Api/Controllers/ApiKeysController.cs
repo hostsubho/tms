@@ -76,12 +76,17 @@ public class ApiKeysController : ControllerBase
             new CreatedApiKeyResponse(key.Id, key.Name, key.KeyPrefix, generated.Plaintext, key.CreatedAt));
     }
 
+    // Deliberately NOT gated by IsEnabledAsync, unlike GetKeys/CreateKey above.
+    // Revoking is a safety action - disabling the Integrations module is
+    // exactly when an Admin most needs to be able to kill a still-live
+    // credential, not a moment where that ability should itself lock up.
+    // Found during a post-ship audit of the module-licensing feature; see
+    // the equivalent carve-out on WebhooksController.
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> RevokeKey(Guid id, CancellationToken ct)
     {
         var tenantId = _tenantContext.TenantId
             ?? throw new InvalidOperationException("Tenant could not be resolved for this request.");
-        if (!await _moduleAccess.IsEnabledAsync(tenantId, ModuleKey.IntegrationsApi, ct)) return ModuleDisabled();
 
         var key = await _db.ApiKeys.FirstOrDefaultAsync(k => k.Id == id, ct);
         if (key is null) return NotFound();
